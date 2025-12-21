@@ -1,8 +1,27 @@
+
 import { GoogleGenAI, Type } from "@google/genai";
 
-const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+// specific check to see if the key is actually set and not just the placeholder
+const apiKey = process.env.API_KEY;
+const isAiEnabled = apiKey && apiKey.length > 20 && apiKey !== 'your_google_gemini_api_key_here';
+
+let ai: GoogleGenAI | null = null;
+
+if (isAiEnabled) {
+  try {
+    ai = new GoogleGenAI({ apiKey: apiKey });
+  } catch (error) {
+    console.warn("Failed to initialize Google GenAI, falling back to mock mode.");
+  }
+}
 
 export const getTagSuggestions = async (title: string, description: string, category: string): Promise<string[]> => {
+  // Fallback if AI is not enabled
+  if (!ai) {
+    console.log("AI not enabled: Returning mock tags");
+    return ["Mock Tag 1", "Mock Tag 2", "Development Mode", category || "General"];
+  }
+
   try {
     const response = await ai.models.generateContent({
       model: 'gemini-3-flash-preview',
@@ -27,7 +46,7 @@ export const getTagSuggestions = async (title: string, description: string, cate
     return [];
   } catch (error) {
     console.error("AI Tag Suggestion Error", error);
-    return [];
+    return ["Error Fallback", "Manual Tag"];
   }
 };
 
@@ -36,6 +55,11 @@ export const getSupportResponse = async (
   role: 'Freelancer' | 'Employer', 
   history: {sender: string, text: string}[]
 ): Promise<string> => {
+  // Fallback if AI is not enabled
+  if (!ai) {
+    return "I am currently running in **Demo Mode** because no API Key was provided during deployment.\n\nIn a real deployment, I would use Google Gemini to answer your question: \"" + message + "\" based on the context of being a " + role + ".";
+  }
+
   try {
     // Construct conversation history for context
     const conversationHistory = history.map(h => 
