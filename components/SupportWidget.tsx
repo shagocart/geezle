@@ -1,79 +1,206 @@
 
 import React, { useState, useRef, useEffect } from 'react';
-import { MessageCircle, X, Send, Headphones, Sparkles, User, Briefcase, RefreshCw, LifeBuoy, Paperclip, FileText, Image as ImageIcon } from 'lucide-react';
-import { getSupportResponse } from '../services/ai';
+import { MessageCircle, X, Send, Headphones, Sparkles, RefreshCw, Paperclip, FileText, Image as ImageIcon, ChevronRight, Mic, MicOff } from 'lucide-react';
+import { getSupportResponse, loadChatFlow, ChatOption, ChatFlow } from '../services/ai';
 import { Attachment } from '../types';
+import { Link, useNavigate } from 'react-router-dom';
 
 type Sender = 'user' | 'agent' | 'system';
 type UserRole = 'Freelancer' | 'Employer' | null;
 
-interface ChatMessage {
+interface UIMessage {
   sender: Sender;
-  text: string;
+  text?: string;
   timestamp: Date;
   attachments?: Attachment[];
 }
 
+// Add simple type for Web Speech API
+interface IWindow extends Window {
+  webkitSpeechRecognition: any;
+  SpeechRecognition: any;
+}
+
 const SupportWidget: React.FC = () => {
+  const [chatFlow, setChatFlow] = useState<ChatFlow | null>(null);
   const [isOpen, setIsOpen] = useState(false);
   const [role, setRole] = useState<UserRole>(null);
+  
+  // Chat State
+  const [chatHistory, setChatHistory] = useState<UIMessage[]>([]);
+  const [currentOptions, setCurrentOptions] = useState<ChatOption[]>([]);
+  const [isFlowLoaded, setIsFlowLoaded] = useState(false);
+  
+  // Input State
   const [message, setMessage] = useState('');
   const [isTyping, setIsTyping] = useState(false);
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  
+  // Voice State
+  const [isListening, setIsListening] = useState(false);
+  const recognitionRef = useRef<any>(null);
+  
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const navigate = useNavigate();
 
-  const [chatHistory, setChatHistory] = useState<ChatMessage[]>([]);
-
-  // Initial Jima Greeting
+  // Load Configuration on Mount
   useEffect(() => {
-    if (chatHistory.length === 0) {
-      setChatHistory([
-        { 
-          sender: 'agent', 
-          text: "Hi there, I’m Jima, AtMyWorks’ AI Customer Support Agent.\n\nI’m here to assist you with any customer support questions or concerns you may have.\n\nPlease choose one of the options below to start chatting with me. You can type “switch” at any time to change your selection.", 
-          timestamp: new Date() 
-        }
-      ]);
+    const initChat = async () => {
+      try {
+        const flow = await loadChatFlow();
+        setChatFlow(flow);
+        setIsFlowLoaded(true);
+        setCurrentOptions(flow.initial_prompt.options);
+        
+        // Set initial greeting
+        setChatHistory([
+          { 
+            sender: 'agent', 
+            text: flow.initial_prompt.text, 
+            timestamp: new Date() 
+          }
+        ]);
+      } catch (error) {
+        console.error("Failed to initialize chat flow", error);
+      }
+    };
+    initChat();
+  }, []);
+
+  // Initialize Speech Recognition
+  useEffect(() => {
+    const windowObj = window as unknown as IWindow;
+    const SpeechRecognition = windowObj.SpeechRecognition || windowObj.webkitSpeechRecognition;
+    
+    if (SpeechRecognition) {
+        recognitionRef.current = new SpeechRecognition();
+        recognitionRef.current.continuous = false;
+        recognitionRef.current.interimResults = false;
+        recognitionRef.current.lang = 'en-US';
+
+        recognitionRef.current.onresult = (event: any) => {
+            const transcript = event.results[0][0].transcript;
+            setMessage(prev => prev + (prev ? ' ' : '') + transcript);
+            setIsListening(false);
+        };
+
+        recognitionRef.current.onerror = (event: any) => {
+            console.error('Speech recognition error', event.error);
+            setIsListening(false);
+        };
+
+        recognitionRef.current.onend = () => {
+            setIsListening(false);
+        };
     }
   }, []);
 
-  // Auto-scroll to bottom
+  // Auto-scroll
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [chatHistory, role, isTyping]);
+  }, [chatHistory, isTyping, currentOptions, isOpen]);
 
-  const handleRoleSelect = (selectedRole: UserRole) => {
-    setRole(selectedRole);
-    setChatHistory(prev => [
-      ...prev,
-      { sender: 'user', text: `I need help as an ${selectedRole}`, timestamp: new Date() },
-      { sender: 'agent', text: `Great! I'm now assisting you as a **${selectedRole}**. How can I help you today?`, timestamp: new Date() }
-    ]);
+  const handleAction = (path: string) => {
+      // Handle Navigation Actions based on path
+      switch(path) {
+          case 'action_dashboard_freelancer': navigate('/freelancer/dashboard'); break;
+          case 'action_dashboard_client': navigate('/client/dashboard'); break;
+          case 'action_profile': navigate('/profile/edit'); break;
+          case 'action_browse_jobs': navigate('/browse-jobs'); break;
+          case 'action_create_job': navigate('/create-job'); break;
+          case 'redirect_support': 
+              setTimeout(() => {
+                  setIsOpen(false);
+                  navigate('/support');
+              }, 1000);
+              break;
+      }
   };
 
-  const requestHumanAgent = () => {
-    if (!role || isTyping) return;
+  const handleOptionClick = (option: ChatOption) => {
+    if (!chatFlow) return;
+
+    // 1. User Message
+    setChatHistory(prev => [...prev, { sender: 'user', text: option.label, timestamp: new Date() }]);
     
-    setChatHistory(prev => [...prev, { sender: 'user', text: "I'd like to speak with a human agent.", timestamp: new Date() }]);
-    setIsTyping(true);
+    // 2. Set Role if provided
+    if (option.role === 'freelancer') setRole('Freelancer');
+    if (option.role === 'employer') setRole('Employer');
+
+    // 3. Reset Flow
+    if (option.path === 'reset') {
+        handleReset();
+        return;
+    }
+
+    // 4. Handle Logic
+    const pathData = chatFlow.paths[option.path];
     
-    // Simulate delay and ticket creation
-    setTimeout(() => {
-      setIsTyping(false);
-      const ticketNum = Math.floor(100000 + Math.random() * 900000);
-      setChatHistory(prev => [...prev, { 
-        sender: 'agent', 
-        text: `I understand. I've created a priority support ticket (#${ticketNum}) for you.\n\nA human support specialist has been notified and will review our conversation history. They will join this chat shortly or contact you via email if you go offline.`, 
-        timestamp: new Date() 
-      }]);
-    }, 2000);
+    if (pathData) {
+        setIsTyping(true);
+        setCurrentOptions([]); // Hide options while thinking
+
+        setTimeout(() => {
+            setIsTyping(false);
+            
+            // Add Agent Messages
+            const newMessages: UIMessage[] = pathData.messages.map(m => ({
+                sender: 'agent',
+                text: m.text,
+                timestamp: new Date()
+            }));
+            setChatHistory(prev => [...prev, ...newMessages]);
+
+            // Update Options
+            if (pathData.options) {
+                setCurrentOptions(pathData.options);
+            }
+
+            // Handle Redirections
+            if (pathData.action) {
+                handleAction(pathData.action);
+            }
+        }, 500);
+    } else if (option.path.startsWith('action_')) {
+        // Direct Action without message
+        handleAction(option.path);
+    }
+  };
+
+  const handleReset = () => {
+      if (!chatFlow) return;
+      setRole(null);
+      setCurrentOptions(chatFlow.initial_prompt.options);
+      setChatHistory(prev => [
+          ...prev, 
+          { sender: 'system', text: '--- Conversation Reset ---', timestamp: new Date() },
+          { sender: 'agent', text: chatFlow.initial_prompt.text, timestamp: new Date() }
+      ]);
   };
 
   const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files[0]) {
       setSelectedFile(e.target.files[0]);
     }
+  };
+
+  const toggleListening = () => {
+      if (!recognitionRef.current) {
+          alert("Your browser does not support voice input.");
+          return;
+      }
+
+      if (isListening) {
+          recognitionRef.current.stop();
+      } else {
+          try {
+            recognitionRef.current.start();
+            setIsListening(true);
+          } catch (e) {
+            console.error("Failed to start voice", e);
+          }
+      }
   };
 
   const handleSend = async (e: React.FormEvent) => {
@@ -87,17 +214,12 @@ const SupportWidget: React.FC = () => {
     setSelectedFile(null);
     if (fileInputRef.current) fileInputRef.current.value = '';
 
-    // Check for switch command
-    if (userMsg.toLowerCase() === 'switch') {
-      setRole(null);
-      setChatHistory(prev => [
-        ...prev, 
-        { sender: 'user', text: userMsg, timestamp: new Date() },
-        { sender: 'agent', text: "Okay, I've reset your role selection. Please choose an option below.", timestamp: new Date() }
-      ]);
+    if (userMsg.toLowerCase() === 'reset' || userMsg.toLowerCase() === 'start over') {
+      handleReset();
       return;
     }
 
+    // Add user message
     let attachment: Attachment | undefined = undefined;
     if (currentFile) {
       attachment = {
@@ -109,7 +231,6 @@ const SupportWidget: React.FC = () => {
       };
     }
 
-    // Add user message
     setChatHistory(prev => [...prev, { 
       sender: 'user', 
       text: userMsg, 
@@ -117,28 +238,30 @@ const SupportWidget: React.FC = () => {
       attachments: attachment ? [attachment] : undefined
     }]);
 
-    if (!role) {
-      setChatHistory(prev => [...prev, { sender: 'agent', text: "Please select a role above so I can better assist you, or type 'switch' to restart.", timestamp: new Date() }]);
-      return;
-    }
-
     setIsTyping(true);
+    setCurrentOptions([]); // Clear options when typing manually
 
-    // Prepare message for AI (mention file if attached)
-    const promptMessage = currentFile 
-      ? `${userMsg} [User attached file: ${currentFile.name}]` 
-      : userMsg;
-
-    // Call AI
-    const response = await getSupportResponse(
-      promptMessage, 
-      role, 
-      chatHistory.map(m => ({ sender: m.sender, text: m.text }))
-    );
-
-    setIsTyping(false);
-    setChatHistory(prev => [...prev, { sender: 'agent', text: response, timestamp: new Date() }]);
+    // Fallback to AI
+    try {
+        const response = await getSupportResponse(
+          userMsg + (currentFile ? ` [Attached: ${currentFile.name}]` : ''), 
+          role, 
+          chatHistory.filter(m => m.text).map(m => ({ sender: m.sender, text: m.text! }))
+        );
+        
+        setIsTyping(false);
+        setChatHistory(prev => [...prev, { sender: 'agent', text: response, timestamp: new Date() }]);
+        
+        // Add a "back to menu" option after AI response
+        setCurrentOptions([{ label: "Back to Menu", path: "reset" }]);
+        
+    } catch (e) {
+        setIsTyping(false);
+        setChatHistory(prev => [...prev, { sender: 'agent', text: "I'm having trouble connecting. Please try again or check your internet.", timestamp: new Date() }]);
+    }
   };
+
+  if (!isFlowLoaded) return null; // Or a small loading indicator
 
   return (
     <div className="fixed bottom-6 right-6 z-[100] flex flex-col items-end font-sans">
@@ -155,110 +278,78 @@ const SupportWidget: React.FC = () => {
                 <span className="absolute bottom-0 right-0 block h-2.5 w-2.5 rounded-full bg-green-400 ring-2 ring-indigo-600" />
               </div>
               <div>
-                <h3 className="font-bold text-sm">Jima (AI Support)</h3>
-                <p className="text-[10px] text-indigo-200">Always here to help</p>
+                <h3 className="font-bold text-sm">{chatFlow?.agent.name || 'Jima'} (Support)</h3>
+                <p className="text-[10px] text-indigo-200">{role ? `${role} Mode` : 'How can we help?'}</p>
               </div>
             </div>
             <div className="flex items-center space-x-2">
-              {role && (
-                 <>
-                   <button 
-                     onClick={requestHumanAgent}
-                     className="text-xs bg-indigo-500 hover:bg-indigo-400 px-2 py-1 rounded text-indigo-100 flex items-center transition-colors" 
-                     title="Request Human Agent"
-                   >
-                     <LifeBuoy className="h-3 w-3 mr-1" /> Agent
-                   </button>
-                   <button 
-                     onClick={() => setRole(null)} 
-                     className="text-xs bg-indigo-500 hover:bg-indigo-400 px-2 py-1 rounded text-indigo-100 flex items-center transition-colors" 
-                     title="Switch Role"
-                   >
-                     <RefreshCw className="h-3 w-3 mr-1" /> Switch
-                   </button>
-                 </>
-              )}
+              <button onClick={handleReset} className="text-indigo-200 hover:text-white p-1" title="Reset Chat">
+                <RefreshCw className="h-4 w-4" />
+              </button>
               <button onClick={() => setIsOpen(false)} className="hover:bg-indigo-700 p-1 rounded transition-colors">
                 <X className="h-5 w-5" />
               </button>
             </div>
           </div>
 
-          {/* Disclaimer Banner */}
-          <div className="bg-gray-50 p-2 text-[10px] text-gray-500 text-center border-b border-gray-200 leading-tight px-4">
-            I may need to share certain information from this discussion with our trusted third-party service providers to support and facilitate the work.
-          </div>
-
           {/* Messages Area */}
           <div className="flex-1 overflow-y-auto p-4 space-y-4 bg-white scrollbar-thin scrollbar-thumb-gray-200 scrollbar-track-transparent">
             {chatHistory.map((msg, idx) => (
-              <div key={idx} className={`flex ${msg.sender === 'user' ? 'justify-end' : 'justify-start'}`}>
-                {msg.sender === 'agent' && (
-                  <div className="h-6 w-6 rounded-full bg-indigo-100 flex items-center justify-center mr-2 mt-1 flex-shrink-0">
-                    <Sparkles className="h-3 w-3 text-indigo-600" />
-                  </div>
-                )}
-                <div className={`max-w-[85%] rounded-2xl px-4 py-3 text-sm shadow-sm whitespace-pre-wrap ${
-                  msg.sender === 'user' 
-                    ? 'bg-indigo-600 text-white rounded-br-none' 
-                    : 'bg-gray-100 text-gray-800 border border-gray-100 rounded-bl-none'
-                }`}>
-                  {msg.text && <p>{msg.text}</p>}
-                  
-                  {msg.attachments && msg.attachments.map(att => (
-                    <div key={att.id} className="mt-2 p-2 bg-white/20 rounded border border-white/20">
-                      {att.type === 'image' ? (
-                         <img src={att.url} alt={att.name} className="max-h-32 rounded object-cover" />
-                      ) : (
-                        <div className="flex items-center space-x-2 text-xs">
-                          <FileText className="h-4 w-4" />
-                          <span className="truncate max-w-[150px]">{att.name}</span>
+              <div key={idx} className={`flex ${msg.sender === 'user' ? 'justify-end' : (msg.sender === 'system' ? 'justify-center' : 'justify-start')}`}>
+                
+                {msg.sender === 'system' ? (
+                    <span className="text-xs text-gray-400 italic py-2">{msg.text}</span>
+                ) : (
+                    <>
+                        {msg.sender === 'agent' && (
+                        <div className="h-6 w-6 rounded-full bg-indigo-100 flex items-center justify-center mr-2 mt-1 flex-shrink-0">
+                            <Sparkles className="h-3 w-3 text-indigo-600" />
                         </div>
-                      )}
-                    </div>
-                  ))}
-                </div>
+                        )}
+                        <div className={`max-w-[85%] rounded-2xl px-4 py-3 text-sm shadow-sm whitespace-pre-wrap ${
+                        msg.sender === 'user' 
+                            ? 'bg-indigo-600 text-white rounded-br-none' 
+                            : 'bg-gray-100 text-gray-800 border border-gray-100 rounded-bl-none'
+                        }`}>
+                        {msg.text && <p>{msg.text}</p>}
+                        
+                        {msg.attachments && msg.attachments.map(att => (
+                            <div key={att.id} className="mt-2 p-2 bg-white/20 rounded border border-white/20 flex items-center">
+                                <FileText className="h-4 w-4 mr-2" />
+                                <span className="text-xs truncate max-w-[150px]">{att.name}</span>
+                            </div>
+                        ))}
+                        </div>
+                    </>
+                )}
               </div>
             ))}
 
-            {/* Role Selection UI */}
-            {!role && (
-              <div className="flex flex-col space-y-2 mt-4 animate-fade-in">
-                <button 
-                  onClick={() => handleRoleSelect('Freelancer')}
-                  className="flex items-center justify-between p-3 bg-white border border-indigo-200 rounded-xl hover:bg-indigo-50 hover:border-indigo-300 transition-all shadow-sm group"
-                >
-                  <div className="flex items-center">
-                    <User className="h-5 w-5 text-indigo-500 mr-3 group-hover:scale-110 transition-transform" />
-                    <span className="text-sm font-medium text-gray-700">I need help as a Freelancer (Seller)</span>
+            {isTyping && (
+              <div className="flex justify-start animate-pulse">
+                 <div className="h-6 w-6 rounded-full bg-indigo-100 flex items-center justify-center mr-2">
+                    <Sparkles className="h-3 w-3 text-indigo-600" />
                   </div>
-                </button>
-                <button 
-                   onClick={() => handleRoleSelect('Employer')}
-                   className="flex items-center justify-between p-3 bg-white border border-indigo-200 rounded-xl hover:bg-indigo-50 hover:border-indigo-300 transition-all shadow-sm group"
-                >
-                  <div className="flex items-center">
-                    <Briefcase className="h-5 w-5 text-indigo-500 mr-3 group-hover:scale-110 transition-transform" />
-                    <span className="text-sm font-medium text-gray-700">I need help as an Employer (Buyer)</span>
-                  </div>
-                </button>
+                <div className="bg-gray-100 rounded-2xl px-4 py-3 text-gray-500 text-xs">Jima is thinking...</div>
               </div>
             )}
 
-            {isTyping && (
-              <div className="flex justify-start">
-                 <div className="h-6 w-6 rounded-full bg-indigo-100 flex items-center justify-center mr-2 mt-1">
-                    <Sparkles className="h-3 w-3 text-indigo-600" />
-                  </div>
-                <div className="bg-gray-100 rounded-2xl rounded-bl-none px-4 py-3 border border-gray-100">
-                  <div className="flex space-x-1">
-                    <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: '0ms' }}></div>
-                    <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: '150ms' }}></div>
-                    <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: '300ms' }}></div>
-                  </div>
+            {/* Dynamic Options */}
+            {!isTyping && currentOptions.length > 0 && (
+                <div className="flex flex-col space-y-2 mt-2 pl-8">
+                    {currentOptions.map((opt, idx) => (
+                        <button
+                            key={idx}
+                            onClick={() => handleOptionClick(opt)}
+                            className="text-left px-4 py-3 bg-white border border-indigo-100 rounded-xl shadow-sm hover:bg-indigo-50 hover:border-indigo-300 transition-all text-sm font-medium text-gray-700 flex justify-between group"
+                        >
+                            {opt.label}
+                            <ChevronRight className="w-4 h-4 text-gray-400 group-hover:text-indigo-500" />
+                        </button>
+                    ))}
                 </div>
-              </div>
             )}
+            
             <div ref={messagesEndRef} />
           </div>
 
@@ -266,7 +357,7 @@ const SupportWidget: React.FC = () => {
           <div className="p-3 bg-white border-t border-gray-100">
             {selectedFile && (
                <div className="mb-2 flex items-center bg-gray-100 p-2 rounded-lg text-xs relative max-w-fit">
-                 {selectedFile.type.startsWith('image/') ? <ImageIcon className="h-3 w-3 mr-2" /> : <FileText className="h-3 w-3 mr-2" />}
+                 <FileText className="h-3 w-3 mr-2" />
                  <span className="truncate max-w-[200px]">{selectedFile.name}</span>
                  <button onClick={() => setSelectedFile(null)} className="ml-2 hover:text-red-500"><X className="h-3 w-3" /></button>
                </div>
@@ -280,23 +371,32 @@ const SupportWidget: React.FC = () => {
               />
               <button 
                 type="button" 
-                disabled={!role}
                 onClick={() => fileInputRef.current?.click()}
-                className="text-gray-400 hover:text-indigo-600 disabled:opacity-50"
+                className="text-gray-400 hover:text-indigo-600"
               >
                 <Paperclip className="h-5 w-5" />
               </button>
-              <input 
-                type="text" 
-                value={message}
-                onChange={(e) => setMessage(e.target.value)}
-                placeholder={role ? "Ask Jima a question..." : "Select a role above..."}
-                disabled={!role}
-                className="flex-1 text-sm border border-gray-200 rounded-full px-4 py-3 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 disabled:bg-gray-50 disabled:text-gray-400 transition-colors"
-              />
+              
+              <div className="flex-1 relative">
+                  <input 
+                    type="text" 
+                    value={message}
+                    onChange={(e) => setMessage(e.target.value)}
+                    placeholder={isListening ? "Listening..." : "Type a message..."}
+                    className={`w-full text-sm border rounded-full px-4 py-3 focus:outline-none transition-colors ${isListening ? 'border-red-400 bg-red-50 focus:border-red-500 focus:ring-1 focus:ring-red-500' : 'border-gray-200 focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500'}`}
+                  />
+                  <button 
+                    type="button" 
+                    onClick={toggleListening}
+                    className={`absolute right-2 top-1/2 transform -translate-y-1/2 p-1.5 rounded-full transition-colors ${isListening ? 'text-red-600 bg-red-100 animate-pulse' : 'text-gray-400 hover:text-indigo-600'}`}
+                  >
+                    {isListening ? <MicOff className="h-4 w-4" /> : <Mic className="h-4 w-4" />}
+                  </button>
+              </div>
+
               <button 
                 type="submit" 
-                disabled={!role || (!message.trim() && !selectedFile)}
+                disabled={!message.trim() && !selectedFile}
                 className="bg-indigo-600 text-white p-3 rounded-full hover:bg-indigo-700 transition-colors flex-shrink-0 disabled:opacity-50 disabled:cursor-not-allowed shadow-sm"
               >
                 <Send className="h-4 w-4" />
@@ -327,15 +427,8 @@ const SupportWidget: React.FC = () => {
           from { opacity: 0; transform: translateY(20px); }
           to { opacity: 1; transform: translateY(0); }
         }
-        @keyframes fade-in {
-          from { opacity: 0; }
-          to { opacity: 1; }
-        }
         .animate-fade-in-up {
           animation: fade-in-up 0.3s ease-out forwards;
-        }
-        .animate-fade-in {
-          animation: fade-in 0.5s ease-out forwards;
         }
       `}</style>
     </div>

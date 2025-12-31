@@ -1,93 +1,44 @@
 
-import React, { createContext, useContext, useState, ReactNode } from 'react';
-import { Conversation, Message, Attachment } from '../types';
-import { MOCK_CONVERSATIONS } from '../constants';
+import React, { createContext, useContext, useState, useEffect } from 'react';
+import { MessagingService } from '../services/messaging';
+import { useUser } from './UserContext';
 
 interface MessageContextType {
-  conversations: Conversation[];
-  sendMessage: (conversationId: string, senderId: string, text: string, files?: File[]) => void;
-  getConversationsForUser: (userId: string) => Conversation[];
-  getAllConversations: () => Conversation[]; // For Admin
-  markAsRead: (conversationId: string, userId: string) => void;
+  unreadCount: number;
+  refreshMessages: () => void;
 }
 
 const MessageContext = createContext<MessageContextType | undefined>(undefined);
 
-export const MessageProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
-  const [conversations, setConversations] = useState<Conversation[]>(MOCK_CONVERSATIONS);
+export const MessageProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
+  const { user } = useUser();
+  const [unreadCount, setUnreadCount] = useState(0);
 
-  const sendMessage = (conversationId: string, senderId: string, text: string, files: File[] = []) => {
-    setConversations(prev => prev.map(conv => {
-      if (conv.id === conversationId) {
-        const receiver = conv.participants.find(p => p.id !== senderId);
-        
-        // Mock file upload: Create attachment objects with blob URLs
-        const attachments: Attachment[] = files.map(file => ({
-          id: Date.now() + Math.random().toString(36).substring(7),
-          name: file.name,
-          url: URL.createObjectURL(file),
-          type: file.type.startsWith('image/') ? 'image' : file.type.startsWith('video/') ? 'video' : 'document',
-          size: file.size
-        }));
-
-        const newMessage: Message = {
-          id: Date.now().toString(),
-          senderId,
-          receiverId: receiver?.id || 'unknown',
-          text,
-          timestamp: 'Just now',
-          isRead: false,
-          attachments
-        };
-
-        const previewText = files.length > 0 
-          ? (text ? `${text} (Attachment)` : 'Sent an attachment') 
-          : text;
-
-        return {
-          ...conv,
-          lastMessage: previewText,
-          messages: [...conv.messages, newMessage]
-        };
+  const refreshMessages = async () => {
+      if (user) {
+          const convos = await MessagingService.getAllConversations(user.id, user.role);
+          // Calculate total unread messages directed at user
+          let count = 0;
+          convos.forEach(c => {
+              // Simple logic: if conversation has unread count and last message wasn't from me
+              const lastMsg = c.messages[c.messages.length - 1];
+              if (lastMsg && lastMsg.senderId !== user.id && !lastMsg.isRead) {
+                  count += c.unreadCount || 0;
+              }
+          });
+          setUnreadCount(count);
       }
-      return conv;
-    }));
   };
 
-  const markAsRead = (conversationId: string, userId: string) => {
-    setConversations(prev => prev.map(conv => {
-      if (conv.id === conversationId) {
-        return {
-          ...conv,
-          unreadCount: 0,
-          messages: conv.messages.map(m => m.receiverId === userId ? { ...m, isRead: true } : m)
-        };
-      }
-      return conv;
-    }));
-  };
-
-  const getConversationsForUser = (userId: string) => {
-    // For mock purposes, 'me' is the current user in MOCK_DATA
-    // In a real app, this would filter by actual user ID
-    if (userId === 'me' || userId === 'client-1' || userId === 'free-1') {
-      return conversations.filter(c => c.participants.some(p => p.id === 'me'));
-    }
-    return [];
-  };
-
-  const getAllConversations = () => {
-    return conversations;
-  };
+  useEffect(() => {
+      refreshMessages();
+      // Poll for new messages every 10s (simulating real-time)
+      const interval = setInterval(refreshMessages, 10000);
+      return () => clearInterval(interval);
+  }, [user]);
 
   return (
-    <MessageContext.Provider value={{ 
-      conversations, 
-      sendMessage, 
-      getConversationsForUser, 
-      getAllConversations,
-      markAsRead 
-    }}>
+    <MessageContext.Provider value={{ unreadCount, refreshMessages }}>
       {children}
     </MessageContext.Provider>
   );
@@ -95,8 +46,6 @@ export const MessageProvider: React.FC<{ children: ReactNode }> = ({ children })
 
 export const useMessages = () => {
   const context = useContext(MessageContext);
-  if (context === undefined) {
-    throw new Error('useMessages must be used within a MessageProvider');
-  }
+  if (!context) throw new Error('useMessages must be used within MessageProvider');
   return context;
 };

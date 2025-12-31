@@ -1,356 +1,542 @@
-import React, { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
-import { Upload, X, DollarSign, Clock, Video, Image as ImageIcon, Sparkles, Plus } from 'lucide-react';
-import { getTagSuggestions } from '../services/ai';
 
-const CreateGig: React.FC = () => {
-  const navigate = useNavigate();
-  const [formData, setFormData] = useState({
-    title: '',
-    category: '',
-    price: '',
-    deliveryTime: '',
-    description: '',
-  });
+import React, { useState, useEffect } from 'react';
+import { useUser } from '../context/UserContext';
+import { useNotification } from '../context/NotificationContext';
+import { AdminService } from '../services/admin';
+import { Gig, ListingCategory, GigPackage, UploadedFile, GigFAQ, GigRequirement } from '../types';
+import { Briefcase, CheckCircle, X, Trash2, Plus, Sparkles, ChevronRight, ChevronLeft, Image as ImageIcon, Video, HelpCircle, Loader2, Save, FileText } from 'lucide-react';
+import { useNavigate, useSearchParams } from 'react-router-dom';
+import FilePicker from '../components/FilePicker';
+import RichTextEditor from '../components/RichTextEditor';
 
-  const [images, setImages] = useState<File[]>([]);
-  const [previews, setPreviews] = useState<string[]>([]);
-  const [video, setVideo] = useState<File | null>(null);
-  const [videoPreview, setVideoPreview] = useState<string | null>(null);
-  
-  // Tag State
-  const [tags, setTags] = useState<string[]>([]);
-  const [tagInput, setTagInput] = useState('');
-  const [isGeneratingTags, setIsGeneratingTags] = useState(false);
-
-  const handleImageChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    if (e.target.files) {
-      const newFiles = Array.from(e.target.files);
-      const remainingSlots = 6 - images.length;
-      
-      if (remainingSlots <= 0) {
-        alert("You can only upload up to 6 photos.");
-        return;
-      }
-
-      const filesToAdd = newFiles.slice(0, remainingSlots);
-      
-      setImages(prev => [...prev, ...filesToAdd]);
-      const newPreviews = filesToAdd.map(file => URL.createObjectURL(file));
-      setPreviews(prev => [...prev, ...newPreviews]);
-    }
-  };
-
-  const handleVideoChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    if (e.target.files && e.target.files[0]) {
-      const file = e.target.files[0];
-      if (file.size > 50 * 1024 * 1024) { // 50MB limit
-        alert("Video must be under 50MB");
-        return;
-      }
-      setVideo(file);
-      setVideoPreview(URL.createObjectURL(file));
-    }
-  };
-
-  const removeImage = (index: number) => {
-    setImages(prev => prev.filter((_, i) => i !== index));
-    setPreviews(prev => prev.filter((_, i) => i !== index));
-  };
-
-  const removeVideo = () => {
-    setVideo(null);
-    setVideoPreview(null);
-  };
-
-  // Tag Logic
-  const addTag = (e?: React.FormEvent) => {
-    if (e) e.preventDefault();
-    if (tagInput.trim() && !tags.includes(tagInput.trim())) {
-      setTags([...tags, tagInput.trim()]);
-      setTagInput('');
-    }
-  };
-
-  const removeTag = (tagToRemove: string) => {
-    setTags(tags.filter(tag => tag !== tagToRemove));
-  };
-
-  const handleGenerateTags = async () => {
-    if (!formData.title || !formData.description) {
-      alert("Please fill in the Title and Description first.");
-      return;
-    }
-    setIsGeneratingTags(true);
-    const suggestions = await getTagSuggestions(formData.title, formData.description, formData.category);
+const CreateGig = () => {
+    const { user } = useUser();
+    const { showNotification } = useNotification();
+    const navigate = useNavigate();
+    const [searchParams] = useSearchParams();
+    const gigId = searchParams.get('id');
+    const isEditMode = !!gigId;
     
-    if (suggestions && suggestions.length > 0) {
-      // Merge new tags avoiding duplicates
-      const newTags = [...tags];
-      suggestions.forEach(s => {
-        if (!newTags.includes(s)) newTags.push(s);
-      });
-      setTags(newTags);
-    } else {
-      alert("Could not generate tags at this time. Please try again later.");
-    }
+    // Steps: Overview, Pricing, Description, Requirements, Gallery, Publish
+    const steps = ['Overview', 'Scope & Pricing', 'Description', 'Requirements', 'Gallery', 'Publish'];
+    const [currentStep, setCurrentStep] = useState(1);
     
-    setIsGeneratingTags(false);
-  };
+    // AI Generation State
+    const [isAIGenerating, setIsAIGenerating] = useState(false);
+    const [showAIModal, setShowAIModal] = useState(searchParams.get('mode') === 'ai');
+    const [aiPrompt, setAiPrompt] = useState('');
 
-  const handleSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    console.log('Gig Posted:', { ...formData, images, video, tags });
-    alert('Gig posted successfully!');
-    navigate('/freelancer/dashboard');
-  };
+    // Data State
+    const [categories, setCategories] = useState<ListingCategory[]>([]);
+    const [availableSubs, setAvailableSubs] = useState<any[]>([]);
+    const [loadingData, setLoadingData] = useState(true);
+    
+    const [gig, setGig] = useState<Partial<Gig>>({
+        title: '',
+        category: '',
+        subcategory: '',
+        price: 0,
+        pricingMode: 'packages',
+        packages: [
+            { name: 'Basic', description: '', deliveryDays: 3, revisions: 1, price: 0, features: [] },
+            { name: 'Standard', description: '', deliveryDays: 5, revisions: 3, price: 0, features: [] },
+            { name: 'Premium', description: '', deliveryDays: 7, revisions: -1, price: 0, features: [] }
+        ],
+        description: '',
+        faqs: [],
+        requirements: [],
+        images: [],
+        videos: [],
+        documents: [],
+        status: 'draft', 
+        adminStatus: 'pending'
+    });
 
-  return (
-    <div className="min-h-screen bg-gray-50 py-12 px-4 sm:px-6 lg:px-8">
-      <div className="max-w-3xl mx-auto bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
-        <div className="px-8 py-6 border-b border-gray-100">
-          <h1 className="text-2xl font-bold text-gray-900">Create a New Gig</h1>
-          <p className="mt-1 text-gray-500">Showcase your skills and start selling.</p>
-        </div>
+    // UI State
+    const [isFilePickerOpen, setIsFilePickerOpen] = useState(false);
+    const [filePickerMode, setFilePickerMode] = useState<'image' | 'video' | 'document'>('image');
+
+    useEffect(() => {
+        const init = async () => {
+            const cats = await AdminService.getGigCategories();
+            setCategories(cats);
+
+            if (isEditMode) {
+                // Fetch existing gig (Mock fetch)
+                const existing = (await AdminService.getAdminGigs()).find(g => g.id === gigId);
+                if (existing) {
+                    setGig(existing);
+                } else {
+                    showNotification('alert', 'Error', 'Gig not found');
+                    navigate('/freelancer/dashboard');
+                }
+            } else if (searchParams.get('mode') === 'ai_draft') {
+                 // Load AI draft from session storage
+                 const draft = sessionStorage.getItem('ai_job_brief'); // Reusing brief logic or new
+                 if(draft) {
+                     // logic to parse draft
+                 }
+            }
+            setLoadingData(false);
+        };
+        init();
+    }, [gigId]);
+
+    // Update subcategories when category changes
+    useEffect(() => {
+        const cat = categories.find(c => c.name === gig.category);
+        setAvailableSubs(cat ? cat.subcategories : []);
+    }, [gig.category, categories]);
+
+    const handleAIGenerate = async () => {
+        if (!aiPrompt.trim()) return;
+        setIsAIGenerating(true);
+        try {
+            await new Promise(resolve => setTimeout(resolve, 1500)); // Mock delay
+            
+            const generatedGig: Partial<Gig> = {
+                title: `I will ${aiPrompt.toLowerCase()} professionally`,
+                description: `<p>I am an expert in ${aiPrompt}. I will provide high-quality results tailored to your needs.</p><ul><li>Professional Quality</li><li>Fast Delivery</li></ul>`,
+                category: categories[0]?.name || 'General',
+                price: 50,
+                packages: [
+                    { name: 'Basic', description: 'Starter package', deliveryDays: 2, revisions: 1, price: 50, features: ['Initial Concept'] },
+                    { name: 'Standard', description: 'Standard package', deliveryDays: 4, revisions: 3, price: 100, features: ['Source File'] },
+                    { name: 'Premium', description: 'Premium package', deliveryDays: 7, revisions: -1, price: 200, features: ['VIP Support'] }
+                ]
+            };
+            
+            setGig(prev => ({ ...prev, ...generatedGig }));
+            setShowAIModal(false);
+            showNotification('success', 'Gig Generated', 'AI has drafted your details.');
+        } catch (error) {
+            showNotification('alert', 'Error', 'AI generation failed.');
+        } finally {
+            setIsAIGenerating(false);
+        }
+    };
+
+    const handleNext = () => {
+        if (currentStep === 1 && (!gig.title || !gig.category)) {
+            showNotification('alert', 'Required', 'Title and Category are required.');
+            return;
+        }
+        if (currentStep === 3 && !gig.description) {
+            showNotification('alert', 'Required', 'Description is required.');
+            return;
+        }
         
-        <form onSubmit={handleSubmit} className="p-8 space-y-8">
-          
-          {/* Title Section */}
-          <div>
-            <label className="block text-sm font-medium text-gray-700">Gig Title</label>
-            <div className="mt-1 relative rounded-md shadow-sm">
-                <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-                  <span className="text-gray-500 font-medium">I will</span>
+        if (currentStep < steps.length) setCurrentStep(c => c + 1);
+        else handlePublish();
+    };
+
+    const handleBack = () => {
+        if (currentStep > 1) setCurrentStep(c => c - 1);
+    };
+
+    const handlePublish = async () => {
+        try {
+            await AdminService.saveGig({
+                ...gig,
+                id: gig.id || Math.random().toString(36).substr(2, 9),
+                freelancerName: user?.name || 'Freelancer',
+                freelancerId: user?.id,
+                freelancerAvatar: user?.avatar || '',
+                createdAt: gig.createdAt || new Date().toISOString(),
+                status: 'submitted', // Submit for approval
+                adminStatus: 'pending',
+                isVisible: true
+            } as Gig);
+            
+            showNotification('success', 'Success', `Gig ${isEditMode ? 'updated' : 'submitted'} successfully.`);
+            navigate('/freelancer/dashboard?tab=gigs');
+        } catch (error) {
+            showNotification('alert', 'Error', 'Failed to save gig.');
+        }
+    };
+
+    const updatePackage = (idx: number, field: keyof GigPackage, val: any) => {
+        const pkgs = [...(gig.packages || [])];
+        pkgs[idx] = { ...pkgs[idx], [field]: val };
+        const price = idx === 0 && field === 'price' ? Number(val) : gig.price;
+        setGig({ ...gig, packages: pkgs, price });
+    };
+
+    const handleFileSelect = (file: UploadedFile) => {
+        if (filePickerMode === 'image') {
+            const currentImages = gig.images || [];
+            if (currentImages.length >= 6) {
+                showNotification('alert', 'Limit Reached', 'Max 6 images allowed.');
+                return;
+            }
+            const image = !gig.image ? file.url : gig.image;
+            setGig(prev => ({ ...prev, image, images: [...(prev.images || []), file.url] }));
+        } else if (filePickerMode === 'video') {
+            // Replace existing video to ensure only "a Video" (singular)
+            setGig(prev => ({ ...prev, videos: [file.url] }));
+        } else if (filePickerMode === 'document') {
+            const currentDocs = gig.documents || [];
+            if (currentDocs.length >= 2) {
+                 showNotification('alert', 'Limit Reached', 'Max 2 documents allowed.');
+                 return;
+            }
+            setGig(prev => ({ ...prev, documents: [...(prev.documents || []), file.url] }));
+        }
+        setIsFilePickerOpen(false);
+    };
+
+    const getAcceptedTypes = () => {
+        if (filePickerMode === 'image') return "image/*";
+        if (filePickerMode === 'video') return "video/*";
+        if (filePickerMode === 'document') return ".pdf,.doc,.docx,.txt";
+        return "*";
+    };
+
+    if (loadingData) return <div className="min-h-screen flex items-center justify-center"><Loader2 className="w-8 h-8 animate-spin text-indigo-600"/></div>;
+
+    return (
+        <div className="min-h-screen bg-gray-50 pt-20 pb-12 px-4">
+            <div className="max-w-5xl mx-auto">
+                <div className="mb-8 flex justify-between items-center">
+                    <div>
+                        <h1 className="text-3xl font-bold text-gray-900 mb-2">{isEditMode ? 'Edit Gig' : 'Create New Gig'}</h1>
+                    </div>
+                    {!isEditMode && (
+                        <button 
+                            onClick={() => setShowAIModal(true)}
+                            className="bg-indigo-100 text-indigo-700 px-4 py-2 rounded-lg font-bold flex items-center hover:bg-indigo-200 transition"
+                        >
+                            <Sparkles className="w-4 h-4 mr-2" /> AI Assistant
+                        </button>
+                    )}
                 </div>
-                <input 
-                  type="text" 
-                  required
-                  className="block w-full pl-14 pr-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm"
-                  placeholder="do something I'm really good at"
-                  value={formData.title}
-                  onChange={(e) => setFormData({...formData, title: e.target.value})}
-                />
+
+                {/* Progress Steps */}
+                <div className="flex items-center justify-between relative overflow-x-auto pb-4 mb-4">
+                    <div className="absolute left-0 top-4 w-full h-1 bg-gray-200 -z-10 rounded"></div>
+                    {steps.map((label, idx) => (
+                        <div key={idx} className={`flex flex-col items-center bg-gray-50 px-4 min-w-[100px] ${currentStep > idx + 1 ? 'text-green-600' : currentStep === idx + 1 ? 'text-indigo-600' : 'text-gray-400'}`}>
+                            <div className={`w-8 h-8 rounded-full flex items-center justify-center font-bold text-sm mb-2 transition-colors ${
+                                currentStep > idx + 1 ? 'bg-green-100' : currentStep === idx + 1 ? 'bg-indigo-600 text-white shadow-lg' : 'bg-gray-200'
+                            }`}>
+                                {currentStep > idx + 1 ? <CheckCircle className="w-5 h-5" /> : idx + 1}
+                            </div>
+                            <span className="text-xs font-medium text-center whitespace-nowrap">{label}</span>
+                        </div>
+                    ))}
+                </div>
+
+                <div className="bg-white rounded-2xl shadow-sm border border-gray-200 overflow-hidden min-h-[600px] flex flex-col">
+                    <div className="p-8 flex-1">
+                        
+                        {/* STEP 1: OVERVIEW */}
+                        {currentStep === 1 && (
+                            <div className="max-w-2xl mx-auto space-y-6 animate-fade-in">
+                                <div>
+                                    <label className="block text-sm font-bold text-gray-900 mb-1">Gig Title</label>
+                                    <div className="relative">
+                                        <span className="absolute left-3 top-3 text-gray-500 font-medium">I will</span>
+                                        <input 
+                                            className="w-full pl-14 border-gray-300 rounded-xl p-3 shadow-sm focus:ring-2 focus:ring-indigo-500 focus:border-transparent" 
+                                            placeholder="do something I'm really good at"
+                                            value={gig.title?.startsWith('I will ') ? gig.title.replace('I will ', '') : gig.title}
+                                            onChange={e => setGig({...gig, title: `I will ${e.target.value}`})}
+                                        />
+                                    </div>
+                                </div>
+
+                                <div className="grid grid-cols-2 gap-6">
+                                    <div>
+                                        <label className="block text-sm font-bold text-gray-900 mb-1">Category</label>
+                                        <select 
+                                            className="w-full border-gray-300 rounded-xl p-3 shadow-sm bg-white"
+                                            value={gig.category}
+                                            onChange={e => setGig({...gig, category: e.target.value, subcategory: ''})}
+                                        >
+                                            <option value="">Select Category</option>
+                                            {categories.map(c => <option key={c.id} value={c.name}>{c.name}</option>)}
+                                        </select>
+                                    </div>
+                                    <div>
+                                        <label className="block text-sm font-bold text-gray-900 mb-1">Subcategory</label>
+                                        <select 
+                                            className="w-full border-gray-300 rounded-xl p-3 shadow-sm bg-white"
+                                            value={gig.subcategory}
+                                            onChange={e => setGig({...gig, subcategory: e.target.value})}
+                                            disabled={!availableSubs.length}
+                                        >
+                                            <option value="">Select Subcategory</option>
+                                            {availableSubs.map(s => <option key={s.id} value={s.name}>{s.name}</option>)}
+                                        </select>
+                                    </div>
+                                </div>
+                            </div>
+                        )}
+
+                        {/* STEP 2: PRICING */}
+                        {currentStep === 2 && (
+                            <div className="space-y-8 animate-fade-in">
+                                <div className="overflow-x-auto border rounded-xl shadow-sm">
+                                    <table className="w-full text-sm border-collapse">
+                                        <thead>
+                                            <tr className="bg-gray-50 text-left">
+                                                <th className="p-4 w-1/4 border-r font-medium text-gray-500 uppercase text-xs tracking-wider"></th>
+                                                {['Basic', 'Standard', 'Premium'].map((pkg, i) => (
+                                                    <th key={i} className="p-4 border-r last:border-r-0 text-center font-bold text-gray-900 bg-gray-50 text-lg">{pkg}</th>
+                                                ))}
+                                            </tr>
+                                        </thead>
+                                        <tbody>
+                                            <tr>
+                                                <td className="p-4 border-r border-t font-medium text-gray-700 bg-gray-50">Description</td>
+                                                {gig.packages?.map((pkg, i) => (
+                                                    <td key={i} className="p-2 border-r border-t last:border-r-0">
+                                                        <textarea className="w-full border-gray-200 rounded-lg text-sm p-3 min-h-[100px]" value={pkg.description} onChange={(e) => updatePackage(i, 'description', e.target.value)} />
+                                                    </td>
+                                                ))}
+                                            </tr>
+                                            <tr>
+                                                <td className="p-4 border-r border-t font-medium text-gray-700 bg-gray-50">Delivery (Days)</td>
+                                                {gig.packages?.map((pkg, i) => (
+                                                    <td key={i} className="p-2 border-r border-t last:border-r-0">
+                                                        <input type="number" className="w-full border-gray-200 rounded-lg p-2 text-center" value={pkg.deliveryDays} onChange={(e) => updatePackage(i, 'deliveryDays', parseInt(e.target.value))} />
+                                                    </td>
+                                                ))}
+                                            </tr>
+                                            <tr>
+                                                <td className="p-4 border-r border-t font-medium text-gray-700 bg-gray-50">Price ($)</td>
+                                                {gig.packages?.map((pkg, i) => (
+                                                    <td key={i} className="p-2 border-r border-t last:border-r-0">
+                                                        <input type="number" className="w-full border-gray-200 rounded-lg p-2 font-bold text-center" value={pkg.price} onChange={(e) => updatePackage(i, 'price', parseInt(e.target.value))} />
+                                                    </td>
+                                                ))}
+                                            </tr>
+                                        </tbody>
+                                    </table>
+                                </div>
+                            </div>
+                        )}
+
+                        {/* STEP 3: DESCRIPTION */}
+                        {currentStep === 3 && (
+                            <div className="max-w-3xl mx-auto space-y-6 animate-fade-in">
+                                <div>
+                                    <label className="block text-sm font-bold text-gray-900 mb-2">Gig Description</label>
+                                    <RichTextEditor 
+                                        value={gig.description || ''} 
+                                        onChange={(val) => setGig({...gig, description: val})} 
+                                        placeholder="Describe your gig in detail..." 
+                                        height="300px" 
+                                    />
+                                </div>
+                                <div className="bg-indigo-50 p-4 rounded-lg flex items-start">
+                                    <Sparkles className="w-5 h-5 text-indigo-600 mr-3 mt-0.5" />
+                                    <div>
+                                        <h4 className="text-sm font-bold text-indigo-900">AI Tip</h4>
+                                        <p className="text-xs text-indigo-700">Use formatting to make your description easy to read. Highlight key benefits.</p>
+                                    </div>
+                                </div>
+                            </div>
+                        )}
+
+                        {/* STEP 4: REQUIREMENTS */}
+                        {currentStep === 4 && (
+                            <div className="max-w-3xl mx-auto space-y-6 animate-fade-in">
+                                <div className="bg-blue-50 p-4 rounded-lg border border-blue-100 flex items-start">
+                                    <HelpCircle className="w-5 h-5 text-blue-600 mr-3 mt-0.5" />
+                                    <p className="text-sm text-blue-800">Tell buyers what you need to start the order.</p>
+                                </div>
+
+                                {gig.requirements?.map((req, i) => (
+                                    <div key={i} className="bg-white p-4 rounded-lg border border-gray-200 shadow-sm relative">
+                                        <button onClick={() => setGig({...gig, requirements: gig.requirements?.filter((_, idx) => idx !== i)})} className="absolute top-2 right-2 text-gray-400 hover:text-red-500"><X className="w-4 h-4" /></button>
+                                        <input 
+                                            className="w-full mb-3 border-gray-300 rounded-lg text-sm font-medium p-2" 
+                                            value={req.question} 
+                                            onChange={e => {
+                                                const reqs = [...(gig.requirements || [])];
+                                                reqs[i].question = e.target.value;
+                                                setGig({...gig, requirements: reqs});
+                                            }}
+                                            placeholder="Requirement question..."
+                                        />
+                                    </div>
+                                ))}
+
+                                <button 
+                                    onClick={() => setGig({...gig, requirements: [...(gig.requirements || []), { id: Date.now().toString(), question: '', type: 'text', required: true }]})}
+                                    className="w-full py-3 border-2 border-dashed border-gray-300 rounded-lg text-gray-500 hover:border-indigo-500 hover:text-indigo-600 font-medium transition flex items-center justify-center"
+                                >
+                                    <Plus className="w-4 h-4 mr-2" /> Add Requirement
+                                </button>
+                            </div>
+                        )}
+
+                        {/* STEP 5: GALLERY */}
+                        {currentStep === 5 && (
+                            <div className="max-w-4xl mx-auto space-y-8 animate-fade-in">
+                                {/* Images Section */}
+                                <div>
+                                    <h3 className="text-lg font-bold text-gray-900 mb-4">Gig Images (Max 6)</h3>
+                                    <div className="grid grid-cols-3 gap-6">
+                                        {(gig.images || []).map((img, i) => (
+                                            <div key={i} className="aspect-[4/3] relative rounded-xl overflow-hidden border border-gray-200 group">
+                                                <img src={img} className="w-full h-full object-cover" />
+                                                <button 
+                                                    onClick={() => setGig({...gig, images: gig.images?.filter((_, idx) => idx !== i)})}
+                                                    className="absolute top-2 right-2 bg-red-600 text-white p-1 rounded-full shadow hover:bg-red-700 opacity-0 group-hover:opacity-100 transition"
+                                                >
+                                                    <Trash2 className="w-4 h-4" />
+                                                </button>
+                                            </div>
+                                        ))}
+                                        {(gig.images?.length || 0) < 6 && (
+                                            <div 
+                                                onClick={() => { setFilePickerMode('image'); setIsFilePickerOpen(true); }}
+                                                className="aspect-[4/3] border-2 border-dashed border-gray-300 rounded-xl flex flex-col items-center justify-center cursor-pointer hover:bg-gray-50 transition text-gray-400 hover:text-indigo-600 hover:border-indigo-300"
+                                            >
+                                                <ImageIcon className="w-8 h-8 mb-2" />
+                                                <span className="text-xs font-medium">Add Image</span>
+                                                <span className="text-[10px] mt-1">From Uploads</span>
+                                            </div>
+                                        )}
+                                    </div>
+                                </div>
+
+                                {/* Video Section */}
+                                <div>
+                                    <h3 className="text-lg font-bold text-gray-900 mb-4">Gig Video (Max 1)</h3>
+                                    {gig.videos && gig.videos.length > 0 ? (
+                                        <div className="aspect-video relative rounded-xl overflow-hidden border border-gray-200 bg-black w-full max-w-md">
+                                            <video src={gig.videos[0]} controls className="w-full h-full" />
+                                            <button 
+                                                onClick={() => setGig({...gig, videos: []})}
+                                                className="absolute top-2 right-2 bg-red-600 text-white p-1 rounded-full shadow hover:bg-red-700"
+                                            >
+                                                <Trash2 className="w-4 h-4" />
+                                            </button>
+                                        </div>
+                                    ) : (
+                                        <div 
+                                            onClick={() => { setFilePickerMode('video'); setIsFilePickerOpen(true); }}
+                                            className="aspect-video border-2 border-dashed border-gray-300 rounded-xl flex flex-col items-center justify-center cursor-pointer hover:bg-gray-50 transition text-gray-400 hover:text-indigo-600 hover:border-indigo-300 w-full max-w-md"
+                                        >
+                                            <Video className="w-8 h-8 mb-2" />
+                                            <span className="text-xs font-medium">Add Video</span>
+                                            <span className="text-[10px] mt-1">MP4, MOV (Max 50MB)</span>
+                                        </div>
+                                    )}
+                                </div>
+
+                                {/* Documents Section (New) */}
+                                <div>
+                                    <h3 className="text-lg font-bold text-gray-900 mb-4">Documents (Max 2)</h3>
+                                    <p className="text-xs text-gray-500 mb-4">Upload PDFs for additional context, portfolio samples, or requirements.</p>
+                                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                        {(gig.documents || []).map((doc, i) => (
+                                            <div key={i} className="flex items-center p-3 bg-gray-50 rounded-lg border border-gray-200">
+                                                <FileText className="w-5 h-5 text-red-500 mr-3" />
+                                                <span className="text-sm text-gray-700 flex-1 truncate">Document {i + 1}</span>
+                                                <button 
+                                                    onClick={() => setGig({...gig, documents: gig.documents?.filter((_, idx) => idx !== i)})}
+                                                    className="text-gray-400 hover:text-red-600 p-1"
+                                                >
+                                                    <Trash2 className="w-4 h-4" />
+                                                </button>
+                                            </div>
+                                        ))}
+                                        {(gig.documents?.length || 0) < 2 && (
+                                            <button 
+                                                onClick={() => { setFilePickerMode('document'); setIsFilePickerOpen(true); }}
+                                                className="flex items-center justify-center p-3 border-2 border-dashed border-gray-300 rounded-lg text-gray-500 hover:text-indigo-600 hover:border-indigo-300 transition"
+                                            >
+                                                <Plus className="w-4 h-4 mr-2" /> Add PDF
+                                            </button>
+                                        )}
+                                    </div>
+                                </div>
+                            </div>
+                        )}
+
+                        {/* STEP 6: PUBLISH */}
+                        {currentStep === 6 && (
+                            <div className="max-w-lg mx-auto text-center py-12 animate-fade-in">
+                                <div className="w-24 h-24 bg-green-100 rounded-full flex items-center justify-center mx-auto mb-6">
+                                    <CheckCircle className="w-12 h-12 text-green-600" />
+                                </div>
+                                <h2 className="text-3xl font-bold text-gray-900 mb-2">Ready to Launch!</h2>
+                                <p className="text-gray-600 mb-8">
+                                    Your gig is ready. It will be reviewed by our team shortly after submission.
+                                </p>
+                                <div className="flex justify-center gap-4">
+                                     <button onClick={() => setGig({...gig, status: 'draft'})} className="px-6 py-3 border border-gray-300 rounded-xl font-bold text-gray-700 hover:bg-gray-50">
+                                         Save as Draft
+                                     </button>
+                                     <button onClick={handlePublish} className="bg-indigo-600 text-white px-8 py-3 rounded-xl font-bold hover:bg-indigo-700 shadow-lg flex items-center">
+                                         <Save className="w-4 h-4 mr-2" /> Submit Gig
+                                     </button>
+                                </div>
+                            </div>
+                        )}
+                    </div>
+
+                    {/* Footer */}
+                    <div className="bg-gray-50 px-8 py-4 border-t border-gray-200 flex justify-between items-center mt-auto">
+                        <button 
+                            onClick={handleBack}
+                            disabled={currentStep === 1}
+                            className="text-gray-600 hover:text-gray-900 font-medium px-4 py-2 rounded-lg hover:bg-gray-200 disabled:opacity-30 disabled:cursor-not-allowed transition flex items-center"
+                        >
+                            <ChevronLeft className="w-4 h-4 mr-2" /> Back
+                        </button>
+                        {currentStep < steps.length && (
+                            <button 
+                                onClick={handleNext}
+                                className="bg-indigo-600 text-white px-8 py-3 rounded-lg font-bold hover:bg-indigo-700 shadow-lg shadow-indigo-600/20 transition flex items-center"
+                            >
+                                Next Step <ChevronRight className="w-4 h-4 ml-2" />
+                            </button>
+                        )}
+                    </div>
+                </div>
             </div>
-            <p className="mt-1 text-xs text-gray-500">Keep it short and catchy.</p>
-          </div>
 
-          {/* Category */}
-          <div>
-             <label className="block text-sm font-medium text-gray-700">Category</label>
-             <select 
-               className="mt-1 block w-full pl-3 pr-10 py-2 text-base border-gray-300 focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm rounded-md border"
-               value={formData.category}
-               onChange={(e) => setFormData({...formData, category: e.target.value})}
-             >
-               <option>Select a category...</option>
-               <option>Development</option>
-               <option>Design</option>
-               <option>Marketing</option>
-               <option>Writing</option>
-               <option>Video</option>
-               <option>AI Services</option>
-             </select>
-          </div>
+            {/* AI Modal */}
+            {showAIModal && (
+                <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4 backdrop-blur-sm">
+                    <div className="bg-white rounded-xl shadow-2xl w-full max-w-lg p-8">
+                        <div className="flex justify-between items-center mb-6">
+                            <h3 className="text-xl font-bold text-gray-900 flex items-center">
+                                <Sparkles className="w-6 h-6 mr-2 text-indigo-600" /> AI Gig Generator
+                            </h3>
+                            <button onClick={() => setShowAIModal(false)} className="text-gray-400 hover:text-gray-600"><X className="w-5 h-5" /></button>
+                        </div>
+                        <textarea 
+                            className="w-full border border-gray-300 rounded-xl p-4 mb-6 h-32 focus:ring-2 focus:ring-indigo-500"
+                            placeholder="I want to offer..."
+                            value={aiPrompt}
+                            onChange={e => setAiPrompt(e.target.value)}
+                        />
+                        <button 
+                            onClick={handleAIGenerate}
+                            disabled={isAIGenerating || !aiPrompt}
+                            className="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-3 rounded-xl shadow-lg transition flex justify-center items-center disabled:opacity-70"
+                        >
+                            {isAIGenerating ? <Loader2 className="w-5 h-5 animate-spin" /> : 'Generate My Gig'}
+                        </button>
+                    </div>
+                </div>
+            )}
 
-          {/* Description */}
-          <div>
-            <label className="block text-sm font-medium text-gray-700">Description</label>
-            <textarea 
-              rows={6}
-              required
-              className="mt-1 block w-full border border-gray-300 rounded-md shadow-sm py-2 px-3 focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm"
-              placeholder="Describe what you will provide, your process, and why they should hire you..."
-              value={formData.description}
-              onChange={(e) => setFormData({...formData, description: e.target.value})}
+            <FilePicker 
+                isOpen={isFilePickerOpen}
+                onClose={() => setIsFilePickerOpen(false)}
+                onSelect={handleFileSelect}
+                acceptedTypes={getAcceptedTypes()}
+                title={`Select ${filePickerMode === 'image' ? 'Image' : filePickerMode === 'video' ? 'Video' : 'Document'}`}
             />
-          </div>
-
-          {/* Tags Section */}
-          <div>
-             <div className="flex justify-between items-center mb-2">
-                <label className="block text-sm font-medium text-gray-700">Search Tags</label>
-                <button
-                  type="button"
-                  onClick={handleGenerateTags}
-                  disabled={isGeneratingTags}
-                  className="text-xs flex items-center bg-indigo-50 text-indigo-700 px-2 py-1 rounded-md hover:bg-indigo-100 transition-colors"
-                >
-                  <Sparkles className="h-3 w-3 mr-1" />
-                  {isGeneratingTags ? 'Analyzing...' : 'Auto-generate with AI'}
-                </button>
-             </div>
-             <div className="mt-1 relative rounded-md shadow-sm">
-                <input
-                  type="text"
-                  className="block w-full border border-gray-300 rounded-md shadow-sm py-2 px-3 focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm"
-                  placeholder="Add tags (e.g. Logo Design, React)"
-                  value={tagInput}
-                  onChange={(e) => setTagInput(e.target.value)}
-                  onKeyDown={(e) => e.key === 'Enter' && addTag(e)}
-                />
-                <button 
-                  type="button"
-                  onClick={(e) => addTag(e)}
-                  className="absolute inset-y-0 right-0 px-3 flex items-center bg-gray-50 border-l border-gray-300 rounded-r-md hover:bg-gray-100"
-                >
-                  <Plus className="h-4 w-4 text-gray-500" />
-                </button>
-             </div>
-             <div className="mt-2 flex flex-wrap gap-2">
-               {tags.map((tag, idx) => (
-                 <span key={idx} className="inline-flex items-center px-2.5 py-0.5 rounded-full text-sm font-medium bg-indigo-100 text-indigo-800">
-                   {tag}
-                   <button
-                     type="button"
-                     onClick={() => removeTag(tag)}
-                     className="flex-shrink-0 ml-1.5 h-4 w-4 rounded-full inline-flex items-center justify-center text-indigo-400 hover:bg-indigo-200 hover:text-indigo-500 focus:outline-none"
-                   >
-                     <span className="sr-only">Remove large option</span>
-                     <X className="h-3 w-3" />
-                   </button>
-                 </span>
-               ))}
-             </div>
-             <p className="mt-1 text-xs text-gray-500">Tags help buyers find your gig in search results.</p>
-          </div>
-
-          {/* Photos */}
-          <div>
-             <div className="flex justify-between items-center mb-2">
-               <label className="block text-sm font-medium text-gray-700">Gig Photos ({images.length}/6)</label>
-               <span className="text-xs text-gray-500">Max 6 images</span>
-             </div>
-             
-             <div className="border-2 border-dashed border-gray-300 rounded-lg p-6 hover:bg-gray-50 transition-colors">
-                <input 
-                   type="file" 
-                   multiple 
-                   accept="image/*" 
-                   onChange={handleImageChange}
-                   className="hidden" 
-                   id="gig-image-upload"
-                   disabled={images.length >= 6}
-                />
-                <label htmlFor="gig-image-upload" className={`cursor-pointer flex flex-col items-center justify-center ${images.length >= 6 ? 'opacity-50 cursor-not-allowed' : ''}`}>
-                   <ImageIcon className="h-8 w-8 text-gray-400 mb-2" />
-                   <p className="text-sm text-gray-600">Click to upload photos</p>
-                   <p className="text-xs text-gray-400 mt-1">High quality images increase sales</p>
-                </label>
-             </div>
-             
-             {previews.length > 0 && (
-               <div className="mt-4 grid grid-cols-2 sm:grid-cols-3 gap-4">
-                 {previews.map((src, index) => (
-                   <div key={index} className="relative group">
-                     <img src={src} alt="Preview" className="h-32 w-full object-cover rounded-lg border border-gray-200" />
-                     <button
-                       type="button"
-                       onClick={() => removeImage(index)}
-                       className="absolute top-1 right-1 bg-red-500 text-white rounded-full p-1 opacity-0 group-hover:opacity-100 transition-opacity"
-                     >
-                       <X className="h-4 w-4" />
-                     </button>
-                   </div>
-                 ))}
-               </div>
-             )}
-          </div>
-
-          {/* Video */}
-          <div>
-             <div className="flex justify-between items-center mb-2">
-               <label className="block text-sm font-medium text-gray-700">Gig Video (Optional)</label>
-               <span className="text-xs text-gray-500">Max 1 video (50MB)</span>
-             </div>
-             
-             {!video ? (
-               <div className="border-2 border-dashed border-gray-300 rounded-lg p-6 hover:bg-gray-50 transition-colors">
-                  <input 
-                     type="file" 
-                     accept="video/*" 
-                     onChange={handleVideoChange}
-                     className="hidden" 
-                     id="gig-video-upload"
-                  />
-                  <label htmlFor="gig-video-upload" className="cursor-pointer flex flex-col items-center justify-center">
-                     <Video className="h-8 w-8 text-gray-400 mb-2" />
-                     <p className="text-sm text-gray-600">Click to upload video</p>
-                     <p className="text-xs text-gray-400 mt-1">MP4, MOV</p>
-                  </label>
-               </div>
-             ) : (
-               <div className="relative mt-2 bg-black rounded-lg overflow-hidden group">
-                 <video src={videoPreview!} controls className="w-full h-48 object-contain" />
-                 <button
-                    type="button"
-                    onClick={removeVideo}
-                    className="absolute top-2 right-2 bg-red-500 text-white rounded-full p-1 shadow-lg"
-                 >
-                    <X className="h-4 w-4" />
-                 </button>
-                 <div className="p-2 bg-gray-900 text-white text-xs text-center truncate">
-                   {video.name}
-                 </div>
-               </div>
-             )}
-          </div>
-
-          {/* Pricing & Time */}
-          <div className="grid grid-cols-1 gap-6 sm:grid-cols-2">
-            <div>
-               <label className="block text-sm font-medium text-gray-700">Price ($)</label>
-               <div className="mt-1 relative rounded-md shadow-sm">
-                  <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-                    <DollarSign className="h-5 w-5 text-gray-400" />
-                  </div>
-                  <input 
-                    type="number" 
-                    required
-                    className="block w-full pl-10 pr-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm"
-                    placeholder="50"
-                    value={formData.price}
-                    onChange={(e) => setFormData({...formData, price: e.target.value})}
-                  />
-               </div>
-            </div>
-
-            <div>
-               <label className="block text-sm font-medium text-gray-700">Delivery Time (Days)</label>
-               <div className="mt-1 relative rounded-md shadow-sm">
-                  <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-                    <Clock className="h-5 w-5 text-gray-400" />
-                  </div>
-                  <input 
-                    type="number" 
-                    required
-                    className="block w-full pl-10 pr-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm"
-                    placeholder="3"
-                    value={formData.deliveryTime}
-                    onChange={(e) => setFormData({...formData, deliveryTime: e.target.value})}
-                  />
-               </div>
-            </div>
-          </div>
-
-          <div className="pt-4 flex justify-end border-t border-gray-100">
-            <button
-              type="button"
-              onClick={() => navigate('/freelancer/dashboard')}
-              className="bg-white py-2 px-4 border border-gray-300 rounded-md shadow-sm text-sm font-medium text-gray-700 hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 mr-3"
-            >
-              Cancel
-            </button>
-            <button
-              type="submit"
-              className="inline-flex justify-center py-2 px-6 border border-transparent shadow-sm text-sm font-medium rounded-md text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500"
-            >
-              Publish Gig
-            </button>
-          </div>
-        </form>
-      </div>
-    </div>
-  );
+        </div>
+    );
 };
 
 export default CreateGig;

@@ -1,95 +1,45 @@
-import React, { createContext, useContext, useState, ReactNode } from 'react';
+
+import React, { createContext, useContext, useState, useEffect } from 'react';
 import { Currency } from '../types';
 import { INITIAL_CURRENCIES } from '../constants';
 
 interface CurrencyContextType {
-  currencies: Currency[];
-  currentCurrency: Currency;
+  currency: Currency;
   setCurrency: (code: string) => void;
+  availableCurrencies: Currency[];
   formatPrice: (amount: number) => string;
-  formatStringCurrency: (text: string) => string;
-  // Admin functions
-  addCurrency: (currency: Currency) => void;
-  updateCurrency: (code: string, updates: Partial<Currency>) => void;
-  deleteCurrency: (code: string) => void;
-  toggleCurrencyActive: (code: string) => void;
 }
 
 const CurrencyContext = createContext<CurrencyContextType | undefined>(undefined);
 
-export const CurrencyProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
-  const [currencies, setCurrencies] = useState<Currency[]>(INITIAL_CURRENCIES);
-  const [currentCode, setCurrentCode] = useState<string>('USD');
+export const CurrencyProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
+  // In a real app, these would come from an API/Global Config
+  // For now, we simulate dynamic updates by using state initialized from constants
+  const [availableCurrencies, setAvailableCurrencies] = useState<Currency[]>(INITIAL_CURRENCIES);
+  
+  // Find default or fallback to USD
+  const defaultCurrency = INITIAL_CURRENCIES.find(c => c.isDefault) || INITIAL_CURRENCIES[0];
+  const [currency, setCurrencyState] = useState<Currency>(defaultCurrency);
 
-  const currentCurrency = currencies.find(c => c.code === currentCode) || currencies[0];
+  // Effect to listen for potential updates (simulating real-time config change)
+  // In a real app, this would be a socket listener or polling mechanism 
+  // tied to the Admin Service updates.
 
   const setCurrency = (code: string) => {
-    if (currencies.find(c => c.code === code)?.isActive) {
-      setCurrentCode(code);
-    }
+    const found = availableCurrencies.find(c => c.code === code);
+    if (found) setCurrencyState(found);
   };
 
-  const formatPrice = (amount: number): string => {
-    // Base prices are assumed to be in USD. 
-    // Convert USD -> Target Currency
-    const convertedAmount = amount * currentCurrency.rate;
-    
+  const formatPrice = (amount: number) => {
+    const value = amount * currency.rate;
     return new Intl.NumberFormat('en-US', {
       style: 'currency',
-      currency: currentCurrency.code,
-      minimumFractionDigits: 0,
-      maximumFractionDigits: 2
-    }).format(convertedAmount);
-  };
-
-  // Helper to find "$100" or "$100/hr" in a string and convert it
-  const formatStringCurrency = (text: string): string => {
-    if (currentCurrency.code === 'USD') return text;
-
-    // Regex to match $ followed by numbers (including commas and decimals)
-    // Matches: $2000, $2,000, $25.50
-    return text.replace(/\$(\d+(?:,\d+)*(?:\.\d+)?)/g, (match, p1) => {
-      const value = parseFloat(p1.replace(/,/g, ''));
-      if (isNaN(value)) return match;
-      return formatPrice(value);
-    });
-  };
-
-  // --- Admin Actions ---
-
-  const addCurrency = (newCurrency: Currency) => {
-    if (currencies.some(c => c.code === newCurrency.code)) return;
-    setCurrencies([...currencies, newCurrency]);
-  };
-
-  const updateCurrency = (code: string, updates: Partial<Currency>) => {
-    setCurrencies(currencies.map(c => c.code === code ? { ...c, ...updates } : c));
-  };
-
-  const deleteCurrency = (code: string) => {
-    if (code === 'USD') return; // Prevent deleting base currency
-    setCurrencies(currencies.filter(c => c.code !== code));
-    if (currentCode === code) setCurrentCode('USD');
-  };
-
-  const toggleCurrencyActive = (code: string) => {
-    if (code === 'USD') return;
-    setCurrencies(currencies.map(c => c.code === code ? { ...c, isActive: !c.isActive } : c));
-    if (currentCode === code) setCurrentCode('USD');
+      currency: currency.code,
+    }).format(value);
   };
 
   return (
-    <CurrencyContext.Provider value={{
-      currencies,
-      currentCurrency,
-      setCurrency,
-      formatPrice,
-      formatStringCurrency,
-      addCurrency,
-      updateCurrency,
-      deleteCurrency,
-      toggleCurrencyActive
-    }}>
+    <CurrencyContext.Provider value={{ currency, setCurrency, availableCurrencies, formatPrice }}>
       {children}
     </CurrencyContext.Provider>
   );
@@ -97,8 +47,6 @@ export const CurrencyProvider: React.FC<{ children: ReactNode }> = ({ children }
 
 export const useCurrency = () => {
   const context = useContext(CurrencyContext);
-  if (context === undefined) {
-    throw new Error('useCurrency must be used within a CurrencyProvider');
-  }
+  if (!context) throw new Error('useCurrency must be used within CurrencyProvider');
   return context;
 };
