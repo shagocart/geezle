@@ -10,12 +10,13 @@ const __dirname = path.dirname(__filename);
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, '.', '');
   return {
+    base: '/geezle/', // Critical for GitHub Pages deployment
     server: {
       port: 3000,
       host: '0.0.0.0',
       proxy: {
         '/api': {
-          target: 'http://127.0.0.1:5000', // Targeted to Node.js/Express server port
+          target: 'http://127.0.0.1:5000',
           changeOrigin: true,
           secure: false,
           headers: {
@@ -33,6 +34,10 @@ export default defineConfig(({ mode }) => {
       alias: {
         '@': __dirname,
       }
+    },
+    build: {
+      outDir: 'dist',
+      assetsDir: 'assets',
     }
   };
 });
