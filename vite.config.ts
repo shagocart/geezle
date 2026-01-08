@@ -15,7 +15,7 @@ export default defineConfig(({ mode }) => {
       host: '0.0.0.0',
       proxy: {
         '/api': {
-          target: 'http://127.0.0.1:8000', // Laravel Default Port
+          target: 'http://127.0.0.1:5000', // Targeted to Node.js/Express server port
           changeOrigin: true,
           secure: false,
           headers: {
@@ -27,8 +27,7 @@ export default defineConfig(({ mode }) => {
     },
     plugins: [react()],
     define: {
-      'process.env.API_KEY': JSON.stringify(env.GEMINI_API_KEY),
-      'process.env.GEMINI_API_KEY': JSON.stringify(env.GEMINI_API_KEY)
+      'process.env.API_KEY': JSON.stringify(env.VITE_GEMINI_API_KEY || env.GEMINI_API_KEY),
     },
     resolve: {
       alias: {

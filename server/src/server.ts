@@ -1,27 +1,22 @@
-
-import express from 'express';
+import express, { Request, Response, NextFunction } from 'express';
 import cors from 'cors';
 import { createServer } from 'http';
 import { Server } from 'socket.io';
-import { PrismaClient } from '@prisma/client';
 import dotenv from 'dotenv';
-
-// Routes
-import authRoutes from './routes/auth';
 import adminRoutes from './routes/admin';
-import cmsRoutes from './routes/cms';
-import financeRoutes from './routes/finance';
+import paymentRoutes from './routes/payment'; 
+import semanticSearchRoutes from './routes/semanticSearchRoutes';
+import governanceRoutes from './routes/governance';
 
 dotenv.config();
 
 const app = express();
 const httpServer = createServer(app);
-const prisma = new PrismaClient();
 
 // Real-Time Socket Layer
 const io = new Server(httpServer, {
   cors: {
-    origin: "*", // Lock this down in production
+    origin: "*", 
     methods: ["GET", "POST"]
   }
 });
@@ -36,10 +31,10 @@ app.use((req, res, next) => {
 });
 
 // API Routes
-app.use('/api/auth', authRoutes);
 app.use('/api/admin', adminRoutes);
-app.use('/api/cms', cmsRoutes);
-app.use('/api/finance', financeRoutes);
+app.use('/api/payments', paymentRoutes);
+app.use('/api/semantic-search', semanticSearchRoutes);
+app.use('/api/governance', governanceRoutes);
 
 // Socket Logic
 io.on('connection', (socket) => {

@@ -1,5 +1,5 @@
 
-import React, { useEffect, Suspense } from 'react';
+import React, { useEffect, Suspense, ReactNode, Component } from 'react';
 import { Routes, Route, Navigate, useLocation } from 'react-router-dom';
 import Navbar from './components/Navbar';
 import DynamicFooter from './components/DynamicFooter';
@@ -11,7 +11,8 @@ import { NotificationProvider } from './context/NotificationContext';
 import { FavoritesProvider } from './context/FavoritesContext';
 import { MessageProvider } from './context/MessageContext';
 import { UserProvider, useUser } from './context/UserContext';
-import { Loader } from 'lucide-react';
+import { SocketProvider } from './context/SocketContext';
+import { Loader, AlertTriangle } from 'lucide-react';
 
 // Lazy Loaded Components
 const Landing = React.lazy(() => import('./main/Landing'));
@@ -37,172 +38,125 @@ const BlogPost = React.lazy(() => import('./pages/BlogPost'));
 const StaticPage = React.lazy(() => import('./pages/StaticPage'));
 const Support = React.lazy(() => import('./pages/Support'));
 const AffiliateProgram = React.lazy(() => import('./pages/AffiliateProgram'));
-const Favorites = React.lazy(() => import('./pages/Favorites')); // NEW
+const Favorites = React.lazy(() => import('./pages/Favorites'));
 
 // Community Components
 const CommunityLayout = React.lazy(() => import('./community/CommunityLayout'));
 const CommunityHome = React.lazy(() => import('./community/CommunityHome'));
 const Forum = React.lazy(() => import('./community/Forum'));
-const ThreadDetail = React.lazy(() => import('./community/ThreadDetail')); // NEW
+const ThreadDetail = React.lazy(() => import('./community/ThreadDetail'));
 const Clubs = React.lazy(() => import('./community/Clubs'));
 const Events = React.lazy(() => import('./community/Events'));
 const Chat = React.lazy(() => import('./community/Chat'));
 const Leaderboard = React.lazy(() => import('./community/Leaderboard'));
 
-// Inner App component to use hooks
+interface ErrorBoundaryProps {
+  children?: ReactNode;
+}
+
+interface ErrorBoundaryState {
+  hasError: boolean;
+}
+
+class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundaryState> {
+  public state: ErrorBoundaryState = { hasError: false };
+
+  static getDerivedStateFromError(error: any): ErrorBoundaryState {
+    return { hasError: true };
+  }
+
+  componentDidCatch(error: any, errorInfo: any) {
+    console.error("Uncaught error:", error, errorInfo);
+  }
+
+  render() {
+    if (this.state.hasError) {
+      return (
+        <div className="flex flex-col items-center justify-center h-screen bg-gray-50 text-center p-4">
+          <AlertTriangle className="w-12 h-12 text-red-500 mb-4" />
+          <h2 className="text-xl font-bold text-gray-900">Something went wrong.</h2>
+          <p className="text-gray-600 mb-4">We encountered an unexpected error.</p>
+          <button onClick={() => window.location.reload()} className="bg-blue-600 text-white px-4 py-2 rounded-lg">
+            Reload Page
+          </button>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
+
 const AppContent = () => {
-  const { user, logout } = useUser();
+  const { user } = useUser();
   const { settings } = useContent();
   const location = useLocation();
 
-  // Dynamic Favicon Update
   useEffect(() => {
     if (settings?.faviconUrl) {
-      const link = document.querySelector("link[rel*='icon']") as HTMLLinkElement || document.createElement('link');
-      link.type = 'image/svg+xml';
-      link.rel = 'icon';
+      let link = document.querySelector("link[rel*='icon']") as HTMLLinkElement;
+      if (!link) {
+        link = document.createElement('link');
+        link.rel = 'icon';
+        document.head.appendChild(link);
+      }
       link.href = settings.faviconUrl;
-      document.getElementsByTagName('head')[0].appendChild(link);
     }
   }, [settings?.faviconUrl]);
 
-  // Hide Navbar/Footer on Admin Dashboard for full screen feel
   const isAdminRoute = location.pathname.startsWith('/admin') || location.pathname.startsWith('/dev-docs');
   
   return (
     <div className="flex flex-col min-h-screen relative">
       {!isAdminRoute && <Navbar />}
       <main className="flex-grow">
-        <Suspense fallback={<div className="h-screen flex items-center justify-center"><Loader className="w-8 h-8 animate-spin text-blue-600" /></div>}>
-          <Routes>
-            <Route path="/" element={<Landing />} />
-            <Route path="/auth/login" element={<Login />} />
-            <Route path="/auth/signup" element={<Signup />} />
-            
-            {/* Browse & Search Pages */}
-            <Route path="/browse" element={<BrowseTalent />} />
-            <Route path="/browse-jobs" element={<BrowseJobs />} />
-            <Route path="/search" element={<SearchResults />} />
-            
-            {/* Detail Pages */}
-            <Route path="/gigs/:id" element={<GigDetail />} />
-            <Route path="/jobs/:id" element={<JobDetail />} />
-            
-            {/* CMS Pages */}
-            <Route path="/blog" element={<Blog />} />
-            <Route path="/blog/:slug" element={<BlogPost />} />
-            <Route path="/p/:slug" element={<StaticPage />} />
-            
-            {/* Support Page */}
-            <Route path="/support" element={<Support />} />
-            
-            {/* Affiliate Program */}
-            <Route path="/affiliate-program" element={<AffiliateProgram />} />
-            
-            {/* Community Platform Routes */}
-            <Route path="/community" element={<CommunityLayout />}>
-                <Route index element={<CommunityHome />} />
-                <Route path="forum" element={<Forum />} />
-                <Route path="thread/:id" element={<ThreadDetail />} />
-                <Route path="chat" element={<Chat />} />
-                <Route path="clubs" element={<Clubs />} />
-                <Route path="events" element={<Events />} />
-                <Route path="leaderboard" element={<Leaderboard />} />
-                <Route path="content" element={<div className="p-12 text-center text-gray-500">Knowledge Hub Coming Soon</div>} />
-            </Route>
-            
-            {/* Profiles */}
-            <Route path="/profile/:id" element={<FreelancerProfile />} />
-            <Route path="/profile/edit" element={
-              <ProtectedRoute>
-                <EditProfile />
-              </ProtectedRoute>
-            } />
+        <ErrorBoundary>
+          <Suspense fallback={
+            <div className="h-screen flex items-center justify-center bg-white">
+              <Loader className="w-8 h-8 animate-spin text-blue-600" />
+            </div>
+          }>
+            <Routes>
+              <Route path="/" element={<Landing />} />
+              <Route path="/auth/login" element={<Login />} />
+              <Route path="/auth/signup" element={<Signup />} />
+              <Route path="/browse" element={<BrowseTalent />} />
+              <Route path="/browse-jobs" element={<BrowseJobs />} />
+              <Route path="/search" element={<SearchResults />} />
+              <Route path="/gigs/:id" element={<GigDetail />} />
+              <Route path="/jobs/:id" element={<JobDetail />} />
+              <Route path="/blog" element={<Blog />} />
+              <Route path="/blog/:slug" element={<BlogPost />} />
+              <Route path="/p/:slug" element={<StaticPage />} />
+              <Route path="/support" element={<Support />} />
+              <Route path="/affiliate-program" element={<AffiliateProgram />} />
+              
+              <Route path="/community" element={<CommunityLayout />}>
+                  <Route index element={<CommunityHome />} />
+                  <Route path="forum" element={<Forum />} />
+                  <Route path="thread/:id" element={<ThreadDetail />} />
+                  <Route path="chat" element={<Chat />} />
+                  <Route path="clubs" element={<Clubs />} />
+                  <Route path="events" element={<Events />} />
+                  <Route path="leaderboard" element={<Leaderboard />} />
+                  <Route path="content" element={<div className="p-12 text-center text-gray-500">Knowledge Hub Coming Soon</div>} />
+              </Route>
+              
+              <Route path="/profile/:id" element={<FreelancerProfile />} />
+              <Route path="/profile/edit" element={<ProtectedRoute><EditProfile /></ProtectedRoute>} />
+              <Route path="/kyc" element={<ProtectedRoute><KYCVerification /></ProtectedRoute>} />
+              <Route path="/messages" element={<ProtectedRoute><Messages /></ProtectedRoute>} />
+              <Route path="/messages/:conversationId" element={<ProtectedRoute><Messages /></ProtectedRoute>} />
+              <Route path="/favorites" element={<ProtectedRoute><Favorites /></ProtectedRoute>} />
 
-            {/* Protected Common Routes */}
-            <Route path="/kyc" element={
-                <ProtectedRoute>
-                  <KYCVerification />
-                </ProtectedRoute>
-            } />
-
-            <Route path="/messages" element={
-                <ProtectedRoute>
-                  <Messages />
-                </ProtectedRoute>
-            } />
-            
-            {/* Deep link for messages */}
-            <Route path="/messages/:conversationId" element={
-                <ProtectedRoute>
-                  <Messages />
-                </ProtectedRoute>
-            } />
-
-            <Route path="/favorites" element={
-                <ProtectedRoute>
-                  <Favorites />
-                </ProtectedRoute>
-            } />
-
-            {/* Admin Routes */}
-            <Route 
-              path="/admin/*" 
-              element={
-                <ProtectedRoute allowedRoles={[UserRole.ADMIN]}>
-                  <AdminDashboard />
-                </ProtectedRoute>
-              } 
-            />
-            
-            {/* Freelancer Routes */}
-            <Route 
-              path="/freelancer/dashboard" 
-              element={
-                  <ProtectedRoute allowedRoles={[UserRole.FREELANCER]}>
-                    <FreelancerDashboard />
-                  </ProtectedRoute>
-              } 
-            />
-              <Route 
-              path="/create-gig" 
-              element={
-                  <ProtectedRoute allowedRoles={[UserRole.FREELANCER]}>
-                    <CreateGig />
-                  </ProtectedRoute>
-              } 
-            />
-
-            {/* Client Routes */}
-              <Route 
-              path="/client/dashboard" 
-              element={
-                  <ProtectedRoute allowedRoles={[UserRole.EMPLOYER]}>
-                    <ClientDashboard />
-                  </ProtectedRoute>
-              } 
-            />
-            <Route 
-              path="/create-job" 
-              element={
-                  <ProtectedRoute allowedRoles={[UserRole.EMPLOYER]}>
-                    <CreateJob />
-                  </ProtectedRoute>
-              } 
-            />
-
-            {/* Developer Documentation */}
-            <Route 
-              path="/dev-docs" 
-              element={
-                <ProtectedRoute allowedRoles={[UserRole.ADMIN]}>
-                  <DeveloperDocs />
-                </ProtectedRoute>
-              } 
-            />
-            
-          </Routes>
-        </Suspense>
+              <Route path="/admin/*" element={<ProtectedRoute allowedRoles={[UserRole.ADMIN]}><AdminDashboard /></ProtectedRoute>} />
+              <Route path="/freelancer/dashboard" element={<ProtectedRoute allowedRoles={[UserRole.FREELANCER]}><FreelancerDashboard /></ProtectedRoute>} />
+              <Route path="/create-gig" element={<ProtectedRoute allowedRoles={[UserRole.FREELANCER]}><CreateGig /></ProtectedRoute>} />
+              <Route path="/client/dashboard" element={<ProtectedRoute allowedRoles={[UserRole.EMPLOYER]}><ClientDashboard /></ProtectedRoute>} />
+              <Route path="/create-job" element={<ProtectedRoute allowedRoles={[UserRole.EMPLOYER]}><CreateJob /></ProtectedRoute>} />
+              <Route path="/dev-docs" element={<ProtectedRoute allowedRoles={[UserRole.ADMIN]}><DeveloperDocs /></ProtectedRoute>} />
+            </Routes>
+          </Suspense>
+        </ErrorBoundary>
       </main>
       {!isAdminRoute && <DynamicFooter />}
       <SupportWidget />
@@ -216,16 +170,10 @@ interface ProtectedRouteProps {
 }
 
 const ProtectedRoute: React.FC<ProtectedRouteProps> = ({ children, allowedRoles }) => {
-  const { user, isAuthenticated } = useUser();
-  
-  if (!isAuthenticated || !user) {
-    return <Navigate to="/auth/login" />;
-  }
-  
-  if (allowedRoles && !allowedRoles.includes(user.role)) {
-    return <Navigate to="/" />;
-  }
-  
+  const { user, isAuthenticated, isLoading } = useUser();
+  if (isLoading) return <div className="h-screen flex items-center justify-center"><Loader className="w-8 h-8 animate-spin text-blue-600" /></div>;
+  if (!isAuthenticated || !user) return <Navigate to="/auth/login" />;
+  if (allowedRoles && !allowedRoles.includes(user.role)) return <Navigate to="/" />;
   return <>{children}</>;
 };
 
@@ -235,11 +183,13 @@ function App() {
       <ContentProvider>
         <NotificationProvider>
           <CurrencyProvider>
-            <FavoritesProvider>
-              <MessageProvider>
-                <AppContent />
-              </MessageProvider>
-            </FavoritesProvider>
+            <SocketProvider>
+              <FavoritesProvider>
+                <MessageProvider>
+                  <AppContent />
+                </MessageProvider>
+              </FavoritesProvider>
+            </SocketProvider>
           </CurrencyProvider>
         </NotificationProvider>
       </ContentProvider>

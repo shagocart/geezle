@@ -9,7 +9,6 @@ import { useCurrency } from '../context/CurrencyContext';
 import { useNotification } from '../context/NotificationContext';
 import { UserRole, HeaderConfig, NavItem, ActivityConfig, NavIconConfig } from '../types';
 import { CMSService } from '../services/cms';
-import SearchInput from './SearchInput';
 
 const Navbar = () => {
   const { user, isAuthenticated, logout } = useUser();
@@ -112,28 +111,23 @@ const Navbar = () => {
 
   if (!headerConfig) return null;
 
+  // Priority: Header Config > Global Settings
+  const displayLogo = headerConfig.logoUrl || settings?.logoUrl;
+
   return (
     <nav className={`bg-${headerConfig.variant === 'dark' ? 'gray-900' : 'white'} border-b border-gray-200 sticky top-0 z-40 transition-colors`}>
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
         <div className="flex justify-between h-16 items-center">
           
-          {/* Left: Logo & Search */}
-          <div className="flex items-center flex-1">
+          {/* Left: Logo */}
+          <div className="flex items-center">
             <Link to={headerConfig.homeUrl || '/'} className="flex-shrink-0 flex items-center mr-8">
-              {headerConfig.logoUrl ? (
-                  <img src={headerConfig.logoUrl} alt="Logo" className="h-8 w-auto object-contain" />
+              {displayLogo ? (
+                  <img src={displayLogo} alt="Logo" className="h-8 w-auto object-contain" />
               ) : (
                   <div className="w-8 h-8 bg-blue-600 rounded-lg flex items-center justify-center font-bold text-lg text-white">G</div>
               )}
             </Link>
-
-            {/* Smart AI Search (Center) */}
-            <div className="hidden md:block w-full max-w-lg">
-                <SearchInput 
-                    placeholder={isClient ? "What do you want to get done today?" : "Search for services, talent, or jobs..."} 
-                    className="w-full"
-                />
-            </div>
           </div>
 
           {/* Right Navigation */}

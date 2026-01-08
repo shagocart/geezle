@@ -1,5 +1,5 @@
 
-import React, { createContext, useContext, useState, useEffect } from 'react';
+import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
 import { PlatformSettings } from '../types';
 import { CMSService } from '../services/cms';
 
@@ -22,10 +22,11 @@ export const ContentProvider: React.FC<{ children: React.ReactNode }> = ({ child
     });
   }, []);
 
-  const updateSettings = async (newSettings: Partial<PlatformSettings>) => {
+  // Fix: Wrapped in useCallback to maintain stable reference across renders
+  const updateSettings = useCallback(async (newSettings: Partial<PlatformSettings>) => {
       const updated = await CMSService.updateSettings(newSettings);
       setSettings(updated);
-  };
+  }, []);
 
   return (
     <ContentContext.Provider value={{ settings, loading, updateSettings }}>

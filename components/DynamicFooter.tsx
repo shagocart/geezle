@@ -4,9 +4,11 @@ import { Link } from 'react-router-dom';
 import { Twitter, Linkedin, Instagram, Facebook, Youtube, Globe, Mail } from 'lucide-react';
 import { CMSService } from '../services/cms';
 import { FooterConfig } from '../types';
+import { useContent } from '../context/ContentContext';
 
 const DynamicFooter = () => {
   const [config, setConfig] = useState<FooterConfig | null>(null);
+  const { settings } = useContent();
 
   useEffect(() => {
     const loadConfig = async () => {
@@ -33,15 +35,19 @@ const DynamicFooter = () => {
 
   if (!config) return null;
 
+  // Priority: Footer Config > Global Settings
+  const displayLogo = config.logoUrl || settings?.logoUrl;
+
   return (
     <footer className="bg-gray-900 text-white pt-16 pb-8">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+        
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-12 mb-12">
           {/* Brand Column */}
           <div className="space-y-4">
             <Link to="/" className="flex items-center space-x-2">
-              {config.logoUrl ? (
-                   <img src={config.logoUrl} alt="Logo" className="h-8 w-auto object-contain brightness-0 invert" />
+              {displayLogo ? (
+                   <img src={displayLogo} alt="Logo" className="h-8 w-auto object-contain brightness-0 invert" />
               ) : (
                    <div className="w-8 h-8 bg-blue-600 rounded-lg flex items-center justify-center font-bold text-lg text-white">G</div>
               )}

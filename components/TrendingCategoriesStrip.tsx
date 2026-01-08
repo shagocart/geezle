@@ -30,7 +30,7 @@ const TrendingCategoriesStrip = () => {
             const allCats = [...gigs, ...jobs].filter(c => c.status === 'active');
             let displayCats = allCats;
 
-            if (conf.categoryIds && conf.categoryIds.length > 0) {
+            if (conf && conf.categoryIds && conf.categoryIds.length > 0) {
                 displayCats = allCats.filter(c => conf.categoryIds.includes(c.id));
                 // Sort by config order
                 displayCats.sort((a, b) => conf.categoryIds.indexOf(a.id) - conf.categoryIds.indexOf(b.id));
@@ -46,9 +46,7 @@ const TrendingCategoriesStrip = () => {
     // Check visibility based on user role
     if (config) {
         const userRole = user?.role || 'guest';
-        // Need to map 'guest' string to UserRole enum or handle loosely.
-        // Assuming config.visibility stores enum values stringified.
-        const isVisible = config.visibility.some(v => v === userRole);
+        const isVisible = config.visibility ? config.visibility.some(v => v === userRole) : true;
         if (!config.enabled || !isVisible) return null;
     }
 
@@ -103,17 +101,18 @@ const TrendingCategoriesStrip = () => {
     if (categories.length === 0) return null;
 
     return (
-        <div className="bg-white border-b border-gray-200 relative shadow-sm z-20">
-            <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-3 flex items-center">
-                <div className="flex items-center mr-4 text-gray-500 text-xs font-bold uppercase tracking-wider whitespace-nowrap">
-                    <TrendingUp className="w-4 h-4 mr-1 text-red-500" /> {config?.title || 'Trending 🔥'}
+        <div className="bg-white border-b border-gray-100 relative shadow-sm z-20">
+            <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-3.5 flex items-center">
+                <div className="flex items-center mr-6 text-gray-900 text-sm font-bold tracking-tight whitespace-nowrap">
+                    <TrendingUp className="w-5 h-5 mr-2 text-red-500" /> 
+                    {config?.title || 'Trending'}
                 </div>
                 
                 <div className="relative flex-1 overflow-hidden group">
                     {canScrollLeft && (
                         <button 
                             onClick={() => scroll('left')}
-                            className="absolute left-0 top-1/2 -translate-y-1/2 z-10 bg-white/90 p-1 rounded-full shadow-md text-gray-600 hover:text-blue-600 border border-gray-100"
+                            className="absolute left-0 top-1/2 -translate-y-1/2 z-10 bg-white shadow-lg p-1.5 rounded-full text-gray-700 hover:text-blue-600 border border-gray-100 transition-transform hover:scale-110"
                         >
                             <ChevronLeft className="w-4 h-4" />
                         </button>
@@ -121,13 +120,13 @@ const TrendingCategoriesStrip = () => {
 
                     <div 
                         ref={scrollContainerRef}
-                        className="flex space-x-3 overflow-x-auto scrollbar-hide scroll-smooth px-1"
+                        className="flex space-x-4 overflow-x-auto scrollbar-hide scroll-smooth px-1 items-center"
                     >
                         {categories.map((cat) => (
                             <button
                                 key={cat.id}
                                 onClick={() => navigate(`/browse?category=${cat.name}`)}
-                                className="flex-shrink-0 px-3 py-1.5 bg-gray-50 hover:bg-blue-50 border border-gray-200 hover:border-blue-200 rounded-full text-xs font-medium text-gray-700 hover:text-blue-700 transition-colors whitespace-nowrap"
+                                className="flex-shrink-0 px-4 py-2 bg-gray-50 hover:bg-white hover:shadow-md border border-transparent hover:border-gray-100 rounded-full text-sm font-semibold text-gray-700 hover:text-blue-700 transition-all whitespace-nowrap"
                             >
                                 {cat.name}
                             </button>
@@ -137,7 +136,7 @@ const TrendingCategoriesStrip = () => {
                     {canScrollRight && (
                         <button 
                             onClick={() => scroll('right')}
-                            className="absolute right-0 top-1/2 -translate-y-1/2 z-10 bg-white/90 p-1 rounded-full shadow-md text-gray-600 hover:text-blue-600 border border-gray-100"
+                            className="absolute right-0 top-1/2 -translate-y-1/2 z-10 bg-white shadow-lg p-1.5 rounded-full text-gray-700 hover:text-blue-600 border border-gray-100 transition-transform hover:scale-110"
                         >
                             <ChevronRight className="w-4 h-4" />
                         </button>

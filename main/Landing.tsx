@@ -28,26 +28,41 @@ const Landing = () => {
   const [loading, setLoading] = useState(true);
   const { user } = useUser();
 
+  // Depend on user ID/role rather than the full object to prevent unnecessary re-fetches
+  const userId = user?.id;
+  const userRole = user?.role;
+
   useEffect(() => {
+    let mounted = true;
+
     const fetchData = async () => {
         try {
+            // Fetch with fast timeout handled by service
             const [fetchedSections, fetchedSlides] = await Promise.all([
                 CMSService.getHomepageSections({ 
-                    role: user?.role, 
+                    role: userRole, 
                     location: user?.location 
                 }),
                 CMSService.getHomeSlides()
             ]);
-            setSections(fetchedSections.filter(s => s.isActive));
-            setSlides(fetchedSlides);
+            
+            if (mounted) {
+                // Ensure we always have sections to render, even if API fails (CMSService should return defaults, but extra safety here)
+                setSections(fetchedSections && fetchedSections.length > 0 ? fetchedSections.filter(s => s.isActive) : []);
+                setSlides(fetchedSlides || []);
+            }
         } catch (error) {
             console.error("Failed to load landing data", error);
         } finally {
-            setLoading(false);
+            if (mounted) setLoading(false);
         }
     };
     fetchData();
-  }, [user]);
+
+    return () => {
+        mounted = false;
+    };
+  }, [userId, userRole]);
 
   return (
     <>
@@ -55,28 +70,39 @@ const Landing = () => {
         <div className="min-h-screen flex items-center justify-center bg-gray-50">
           <div className="text-center">
             <Loader className="animate-spin text-blue-600 w-10 h-10 mx-auto mb-4" />
-            <p className="text-gray-500">Loading Marketplace...</p>
+            <p className="text-gray-500 font-medium">Loading Marketplace...</p>
           </div>
         </div>
       ) : (
-        <div className="bg-white">
+        <div className="bg-white min-h-screen flex flex-col">
           {/* 1. Trending Categories Strip (Fixed Top) */}
-          <TrendingCategoriesStrip />
+          <div className="sticky top-16 z-20">
+             <TrendingCategoriesStrip />
+          </div>
 
-          {/* 2. Home Slider (Fixed Top) */}
-          <HomeSlider slides={slides} />
+          {/* 2. Home Slider */}
+          <div className="relative z-10">
+             <HomeSlider slides={slides} />
+          </div>
 
-          {/* 3. Dynamic CMS Sections (Including AI Project Brief, etc.) */}
-          <Suspense fallback={<div className="py-20 text-center"><Loader className="animate-spin mx-auto w-8 h-8 text-gray-400" /></div>}>
-              {sections.map((section) => (
-                <React.Fragment key={section.id}>
-                    <SectionRenderer section={section} />
-                    {/* Special Case: Inject Personalized Recommendations after Hero if logged in */}
-                    {section.type === 'hero' && user && (
-                        <Recommendations userId={user.id} />
-                    )}
-                </React.Fragment>
-              ))}
+          {/* 3. Dynamic CMS Sections */}
+          <Suspense fallback={<div className="py-24 text-center"><Loader className="animate-spin mx-auto w-8 h-8 text-gray-400" /></div>}>
+              {sections.length === 0 ? (
+                  // Fallback content if sections are empty (shouldn't happen with CMS defaults)
+                   <div className="py-20 text-center text-gray-500">
+                       <p>Welcome to Geezle. Browse our categories to get started.</p>
+                   </div>
+              ) : (
+                  sections.map((section) => (
+                    <React.Fragment key={section.id}>
+                        <SectionRenderer section={section} />
+                        {/* Special Case: Inject Personalized Recommendations after Hero if logged in */}
+                        {section.type === 'hero' && user && (
+                            <Recommendations userId={user.id} />
+                        )}
+                    </React.Fragment>
+                  ))
+              )}
           </Suspense>
         </div>
       )}

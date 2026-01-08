@@ -1,6 +1,6 @@
 
 import { User, Subscriber, StaffMember, StaffRole, Plan, SupportTicket, FraudAlert, MediaItem, ListingCategory, Gig, Job, FraudLog, ChurnRisk, GrowthForecast, OptimizationProposal, AnomalyAlert, MarketingROI } from '../types';
-import { MOCK_GIGS, MOCK_JOBS } from '../constants';
+import { MOCK_GIGS, MOCK_JOBS, CATEGORIES } from '../constants';
 
 // Laravel API Base URL
 const API_BASE = '/api/admin/commerce';
@@ -19,14 +19,13 @@ const getLocalCategories = (): ListingCategory[] => {
         const stored = localStorage.getItem(LOCAL_CATS_KEY);
         if (stored) return JSON.parse(stored);
     } catch(e) {}
-    // Default categories if empty
-    const defaults: ListingCategory[] = [
-        { id: '1', name: 'Development', slug: 'development', type: 'gig', status: 'active', count: 0, sortOrder: 1, subcategories: [] },
-        { id: '2', name: 'Design', slug: 'design', type: 'gig', status: 'active', count: 0, sortOrder: 2, subcategories: [] },
-        { id: '3', name: 'Writing', slug: 'writing', type: 'job', status: 'active', count: 0, sortOrder: 1, subcategories: [] }
-    ];
-    localStorage.setItem(LOCAL_CATS_KEY, JSON.stringify(defaults));
-    return defaults;
+    
+    // Use rich CATEGORIES from constants as default fallback
+    // Don't overwrite immediately if it was a read error, but here we initialize
+    if (!localStorage.getItem(LOCAL_CATS_KEY)) {
+        localStorage.setItem(LOCAL_CATS_KEY, JSON.stringify(CATEGORIES));
+    }
+    return CATEGORIES;
 };
 
 const api = {
@@ -40,8 +39,9 @@ const api = {
             // Handle Laravel Pagination: if response.data exists and is array, return it, else return response
             return Array.isArray(json.data) ? json.data : json;
         } catch (e) {
-            console.warn(`[API Fail] GET ${endpoint} - Switching to fallback`, e);
-            throw e; // Re-throw to trigger fallback logic
+            // Silently fail to trigger fallback in demo mode
+            // console.debug(`[Mock Mode] GET ${endpoint} - Using local data`);
+            throw e; // Re-throw to trigger fallback logic in service methods
         }
     },
     post: async (endpoint: string, data: any) => {
@@ -54,7 +54,7 @@ const api = {
             if (!res.ok) throw new Error(`API Error: ${res.status}`);
             return await res.json();
         } catch (e) {
-            console.warn(`[API Fail] POST ${endpoint}`, e);
+            // console.debug(`[Mock Mode] POST ${endpoint} failed, using fallback`);
             throw e;
         }
     },
@@ -68,7 +68,6 @@ const api = {
             if (!res.ok) throw new Error(`API Error: ${res.status}`);
             return await res.json();
         } catch (e) {
-            console.warn(`[API Fail] PUT ${endpoint}`, e);
             throw e;
         }
     },
@@ -78,7 +77,6 @@ const api = {
             if (!res.ok) throw new Error(`API Error: ${res.status}`);
             return true;
         } catch (e) {
-            console.warn(`[API Fail] DELETE ${endpoint}`, e);
             throw e;
         }
     }
@@ -281,7 +279,7 @@ export const AdminService = {
 
     getGigCategories: async (): Promise<ListingCategory[]> => {
         try {
-            return await api.get('/gig-categories');
+            return await api.get('/categories?type=gig');
         } catch (e) {
             return getLocalCategories().filter(c => c.type === 'gig');
         }
@@ -289,14 +287,14 @@ export const AdminService = {
 
     getJobCategories: async (): Promise<ListingCategory[]> => {
          try {
-            return await api.get('/job-categories');
+            return await api.get('/categories?type=job');
         } catch (e) {
             return getLocalCategories().filter(c => c.type === 'job');
         }
     },
 
     saveListingCategory: async (cat: ListingCategory): Promise<void> => {
-        const endpoint = cat.type === 'gig' ? '/gig-categories' : '/job-categories';
+        const endpoint = '/categories';
         try {
             if (cat.id && !cat.id.startsWith('cat-')) {
                 await api.put(`${endpoint}/${cat.id}`, cat);
@@ -315,9 +313,7 @@ export const AdminService = {
 
     deleteListingCategory: async (id: string): Promise<void> => {
         try {
-            // Try both endpoints or assume context passed? 
-            // Simplifying by assuming we can try deleting from gig-cats first
-            await api.delete(`/gig-categories/${id}`).catch(() => api.delete(`/job-categories/${id}`));
+            await api.delete(`/categories/${id}`);
         } catch (e) {
             const all = getLocalCategories();
             localStorage.setItem(LOCAL_CATS_KEY, JSON.stringify(all.filter(c => c.id !== id)));
@@ -341,7 +337,7 @@ export const AdminService = {
              if (plan.id && !plan.id.startsWith('plan-')) await api.put(`/plans/${plan.id}`, plan);
              else await api.post('/plans', plan);
         } catch (e) {
-             console.log("Mock saved plan", plan);
+             // Mock save success
         }
     },
 

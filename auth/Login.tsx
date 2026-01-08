@@ -1,5 +1,4 @@
-
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { useUser } from '../context/UserContext';
 import { UserRole } from '../types';
@@ -8,26 +7,35 @@ const Login = () => {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [role, setRole] = useState<UserRole>(UserRole.FREELANCER);
-  const { login } = useUser();
+  const { login, isAuthenticated, user, isLoading } = useUser();
   const navigate = useNavigate();
+
+  // Redirect if already logged in
+  useEffect(() => {
+    if (!isLoading && isAuthenticated && user) {
+        if (user.role === UserRole.ADMIN) {
+            navigate('/admin');
+        } else if (user.role === UserRole.EMPLOYER) {
+            navigate('/client/dashboard');
+        } else {
+            navigate('/freelancer/dashboard');
+        }
+    }
+  }, [isAuthenticated, user, isLoading, navigate]);
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     const success = login(email, password, role);
     
     if (success) {
-        // Intelligent redirect based on role
-        if (role === UserRole.ADMIN) {
-            navigate('/admin');
-        } else if (role === UserRole.EMPLOYER) {
-            navigate('/client/dashboard');
-        } else {
-            navigate('/freelancer/dashboard');
-        }
+        // Redirection happens via useEffect usually, but force here for immediate response
+        // Note: The logic inside context handles the state update, which triggers useEffect
     } else {
         alert('Invalid email or password. Please try again.');
     }
   };
+
+  if (isLoading) return null; // Or a spinner
 
   return (
     <div className="min-h-screen bg-gray-50 flex flex-col justify-center py-12 sm:px-6 lg:px-8">

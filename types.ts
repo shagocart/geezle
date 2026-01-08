@@ -755,6 +755,16 @@ export interface HelpLink {
     isEnabled: boolean;
 }
 
+export interface HeroSearchConfig {
+    headline: string;
+    subheadline: string;
+    searchPlaceholder: string;
+    searchSize: 'normal' | 'large' | 'xl';
+    quickTags: { id: string; label: string; url: string; color?: string }[];
+    trustedBrands: { enabled: boolean; title: string; logos: { id: string; src: string; alt: string }[] };
+    valueProp: { enabled: boolean; heading: string; badges: { id: string; label: string; icon: string }[] };
+}
+
 export interface Attachment {
     id: string;
     name: string;

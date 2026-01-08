@@ -1,5 +1,5 @@
 
-import React, { createContext, useContext, useState, useEffect } from 'react';
+import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
 import { User, UserRole } from '../types';
 import { GcoinService } from '../services/gcoin'; // Import GcoinService
 
@@ -7,7 +7,7 @@ interface AdminCreds {
   email: string;
   password: string;
   username: string;
-  avatar?: string; // ADDED: Persist admin avatar
+  avatar?: string;
 }
 
 const DEFAULT_ADMIN_CREDS: AdminCreds = {
@@ -19,6 +19,7 @@ const DEFAULT_ADMIN_CREDS: AdminCreds = {
 interface UserContextType {
   user: User | null;
   isAuthenticated: boolean;
+  isLoading: boolean;
   login: (email: string, password: string, role: UserRole) => boolean;
   signup: (email: string, name: string, role: UserRole) => void;
   logout: () => void;
@@ -32,6 +33,7 @@ const UserContext = createContext<UserContextType | undefined>(undefined);
 
 export const UserProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [user, setUser] = useState<User | null>(null);
+  const [isLoading, setIsLoading] = useState(true);
 
   const getAdminCreds = (): AdminCreds => {
       const stored = localStorage.getItem('geezle_admin_creds');
@@ -44,18 +46,26 @@ export const UserProvider: React.FC<{ children: React.ReactNode }> = ({ children
       }
   }, []);
 
-  // Helper to ensure wallet exists upon user session start
-  const initWallet = async (userId: string) => {
+  // Wrapped in useCallback to stabilize reference
+  const updateUser = useCallback((updates: Partial<User>) => {
+    setUser(prev => {
+        if (!prev) return null;
+        const updated = { ...prev, ...updates };
+        localStorage.setItem('geezle_user', JSON.stringify(updated));
+        return updated;
+    });
+  }, []);
+
+  const initWallet = useCallback(async (userId: string) => {
       try {
           const wallet = await GcoinService.getWallet(userId);
-          // Sync balance to user object if needed for UI speed
           updateUser({ gcoinBalance: wallet.balance });
       } catch (e) {
           console.error("Failed to init wallet", e);
       }
-  };
+  }, [updateUser]);
 
-  const login = (email: string, password: string, role: UserRole): boolean => {
+  const login = useCallback((email: string, password: string, role: UserRole): boolean => {
     if (role === UserRole.ADMIN) {
         const creds = getAdminCreds();
         if (email.toLowerCase() === creds.email.toLowerCase() && password === creds.password) {
@@ -64,7 +74,6 @@ export const UserProvider: React.FC<{ children: React.ReactNode }> = ({ children
                 name: creds.username,
                 email: creds.email,
                 role: UserRole.ADMIN,
-                // Use stored avatar or generate default
                 avatar: creds.avatar || `https://ui-avatars.com/api/?name=${creds.username}&background=000&color=fff`,
                 kycStatus: 'approved',
                 gcoinBalance: 0
@@ -96,7 +105,7 @@ export const UserProvider: React.FC<{ children: React.ReactNode }> = ({ children
     localStorage.setItem('geezle_user', JSON.stringify(userToSet));
     initWallet(userToSet.id);
     return true;
-  };
+  }, [initWallet]);
 
   const createMockUser = (email: string, role: UserRole): User => ({
       id: 'u1',
@@ -110,7 +119,7 @@ export const UserProvider: React.FC<{ children: React.ReactNode }> = ({ children
       followingCount: 45
   });
 
-  const signup = (email: string, name: string, role: UserRole) => {
+  const signup = useCallback((email: string, name: string, role: UserRole) => {
       const newUser: User = {
           id: Math.random().toString(36).substr(2, 9),
           name: name,
@@ -125,63 +134,64 @@ export const UserProvider: React.FC<{ children: React.ReactNode }> = ({ children
       setUser(newUser);
       localStorage.setItem('geezle_user', JSON.stringify(newUser));
       initWallet(newUser.id);
-  };
+  }, [initWallet]);
 
-  const logout = () => {
+  const logout = useCallback(() => {
     setUser(null);
     localStorage.removeItem('geezle_user');
-  };
+  }, []);
 
-  const updateUser = (updates: Partial<User>) => {
-    setUser(prev => {
-        if (!prev) return null;
-        const updated = { ...prev, ...updates };
-        localStorage.setItem('geezle_user', JSON.stringify(updated));
-        return updated;
-    });
-  };
+  const switchRole = useCallback(() => {
+      setUser(prev => {
+          if (!prev || prev.role === UserRole.ADMIN) return prev;
+          const newRole = prev.role === UserRole.FREELANCER ? UserRole.EMPLOYER : UserRole.FREELANCER;
+          const updated = { ...prev, role: newRole };
+          localStorage.setItem('geezle_user', JSON.stringify(updated));
+          return updated;
+      });
+  }, []);
 
-  const switchRole = () => {
-      if (!user || user.role === UserRole.ADMIN) return;
-      const newRole = user.role === UserRole.FREELANCER ? UserRole.EMPLOYER : UserRole.FREELANCER;
-      updateUser({ role: newRole });
-  };
-
-  const updateAdminProfile = (updates: Partial<AdminCreds>) => {
+  const updateAdminProfile = useCallback((updates: Partial<AdminCreds>) => {
       const current = getAdminCreds();
       const newCreds = { ...current, ...updates };
       localStorage.setItem('geezle_admin_creds', JSON.stringify(newCreds));
       
-      // Real-time update for current session
-      if (user?.role === UserRole.ADMIN) {
-          const userUpdates: Partial<User> = {};
-          if (updates.username) userUpdates.name = updates.username;
-          if (updates.email) userUpdates.email = updates.email;
-          if (updates.avatar) userUpdates.avatar = updates.avatar;
-          
-          if (Object.keys(userUpdates).length > 0) {
-              updateUser(userUpdates);
+      setUser(prev => {
+          if (prev?.role === UserRole.ADMIN) {
+            const userUpdates: Partial<User> = {};
+            if (updates.username) userUpdates.name = updates.username;
+            if (updates.email) userUpdates.email = updates.email;
+            if (updates.avatar) userUpdates.avatar = updates.avatar;
+            if (Object.keys(userUpdates).length > 0) {
+                 return { ...prev, ...userUpdates };
+            }
           }
-      }
-  };
+          return prev;
+      });
+  }, []);
 
   useEffect(() => {
-    const stored = localStorage.getItem('geezle_user');
-    if (stored) {
-      try {
-        const u = JSON.parse(stored);
-        setUser(u);
-        initWallet(u.id);
-      } catch (e) {
-        console.error("Failed to parse user from local storage");
-      }
-    }
-  }, []);
+    const initAuth = async () => {
+        const stored = localStorage.getItem('geezle_user');
+        if (stored) {
+          try {
+            const u = JSON.parse(stored);
+            setUser(u);
+            await initWallet(u.id);
+          } catch (e) {
+            console.error("Failed to parse user from local storage");
+          }
+        }
+        setIsLoading(false);
+    };
+    initAuth();
+  }, [initWallet]);
 
   return (
     <UserContext.Provider value={{ 
         user, 
-        isAuthenticated: !!user, 
+        isAuthenticated: !!user,
+        isLoading,
         login, 
         signup, 
         logout, 

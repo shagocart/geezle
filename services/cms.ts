@@ -1,704 +1,265 @@
 
-// ... existing imports
-import { PlatformSettings, BlogPost, StaticPage, LandingContent, KYCDocument, SystemConfig, PageCategory, MediaItem, ContentBlock, BlogCategory, BlogSettings, HomepageSection, ABTest, HomepageTemplate, HomepageVersion, HomepageAnalytics, UserRole, HomepageSectionType, HeaderConfig, FooterConfig, HomeSlide, TrendingConfig, AffiliatePageContent, ActivityConfig, NavIconConfig, HelpLink, TrustContent, CategoriesContent, HowItWorksContent, FeaturedContent, CTAContent } from '../types';
-import { MOCK_KYC_DOCS } from '../constants';
-import { FileService } from './files'; // Import FileService
+import { PlatformSettings, HomepageSection, HomeSlide, HeaderConfig, FooterConfig, TrendingConfig, ActivityConfig, UserRole, HeroSearchConfig } from '../types';
 
-// ... existing MOCK CONSTANTS DEFINITION ...
-const DEFAULT_LOGO = 'https://ui-avatars.com/api/?name=G&background=0D8ABC&color=fff&size=128';
-const DEFAULT_FAVICON = 'https://ui-avatars.com/api/?name=G&background=0D8ABC&color=fff&size=32';
+const API_URL = '/api'; 
 
-// --- INITIALIZE MISSING VARIABLES ---
-// ... (Keep existing variable initializations: CURRENT_SETTINGS, CURRENT_HEADER, etc.)
-let CURRENT_SETTINGS: PlatformSettings = {
-    siteName: 'Geezle',
-    tagline: 'The Freelance Marketplace',
-    logoUrl: '',
-    faviconUrl: '',
-    adminEmail: 'admin@geezle.com',
-    supportEmail: 'support@geezle.com',
-    footerAboutTitle: 'About Geezle',
-    footerAboutText: 'Connecting talent with opportunity.',
-    footerCopyright: '© 2024 Geezle Inc.',
-    footerLinks: [],
-    socialLinks: [],
-    system: {
-        maintenanceMode: false,
-        registrationsEnabled: true,
-        kycEnforced: false,
-        admin2FA: false
+// --- CIRCUIT BREAKER & CACHE ---
+const CIRCUIT_KEY = 'geezle_api_circuit';
+const requestCache = new Map<string, Promise<any>>();
+const CACHE_DURATION = 60000; // 60 seconds cache
+const REQUEST_TIMEOUT = 5000; // 5 seconds timeout (Increased from 500ms)
+
+const checkCircuit = () => {
+    try {
+        const stored = localStorage.getItem(CIRCUIT_KEY);
+        if (stored) {
+            const { resetTime } = JSON.parse(stored);
+            if (Date.now() < resetTime) return false;
+            localStorage.removeItem(CIRCUIT_KEY);
+        }
+        return true;
+    } catch (e) {
+        return true;
     }
 };
 
-let CURRENT_HEADER: HeaderConfig = {
-    id: 'header-1',
-    homeUrl: '/',
-    variant: 'light',
-    searchEnabled: true,
-    searchMode: 'semantic',
-    logoUrl: '',
-    faviconUrl: '',
+const tripCircuit = () => {
+    console.warn("[CMS] Circuit Tripped: Switching to Offline Mode.");
+    const resetTime = Date.now() + 60000; // 1 minute cooldown
+    localStorage.setItem(CIRCUIT_KEY, JSON.stringify({ resetTime }));
+};
+
+// --- API HELPER ---
+const api = {
+    get: async (endpoint: string) => {
+        // 1. Circuit Breaker
+        if (!checkCircuit()) return null;
+
+        // 2. Cache
+        const cacheKey = `GET:${endpoint}`;
+        if (requestCache.has(cacheKey)) return requestCache.get(cacheKey);
+
+        const requestPromise = (async () => {
+            try {
+                const controller = new AbortController();
+                const id = setTimeout(() => controller.abort(), REQUEST_TIMEOUT);
+                
+                const res = await fetch(`${API_URL}${endpoint}`, { signal: controller.signal });
+                clearTimeout(id);
+                
+                if (res.status === 429 || res.status >= 500) {
+                    tripCircuit();
+                    return null;
+                }
+                if (!res.ok) return null;
+                
+                return await res.json();
+            } catch (e) {
+                // Network error or timeout -> return null to trigger fallback
+                return null;
+            } finally {
+                setTimeout(() => requestCache.delete(cacheKey), CACHE_DURATION);
+            }
+        })();
+
+        requestCache.set(cacheKey, requestPromise);
+        return requestPromise;
+    },
+    post: async (endpoint: string, data: any) => {
+        if (!checkCircuit()) return { success: false };
+        try {
+            const controller = new AbortController();
+            const id = setTimeout(() => controller.abort(), REQUEST_TIMEOUT);
+            const res = await fetch(`${API_URL}${endpoint}`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(data),
+                signal: controller.signal
+            });
+            clearTimeout(id);
+            if (res.status === 429) tripCircuit();
+            if (!res.ok) return { success: false };
+            return await res.json();
+        } catch (e) {
+            return { success: false };
+        }
+    }
+};
+
+// --- DEFAULT DATA (FALLBACKS) ---
+
+const DEFAULT_HEADER: HeaderConfig = {
+    id: 'default', homeUrl: '/', variant: 'light', searchEnabled: true, searchMode: 'keyword', logoUrl: '', faviconUrl: '',
     navigation: [
-        { id: 'nav-1', label: 'Find Talent', url: '/browse', visibility: [UserRole.GUEST, UserRole.EMPLOYER] },
-        { id: 'nav-2', label: 'Find Work', url: '/browse-jobs', visibility: [UserRole.GUEST, UserRole.FREELANCER] },
-        { id: 'nav-3', label: 'Community', url: '/community', visibility: [UserRole.GUEST, UserRole.FREELANCER, UserRole.EMPLOYER] },
+        { id: 'n1', label: 'Find Talent', url: '/browse', visibility: [UserRole.GUEST, UserRole.EMPLOYER, UserRole.ADMIN, UserRole.FREELANCER] },
+        { id: 'n2', label: 'Find Work', url: '/browse-jobs', visibility: [UserRole.GUEST, UserRole.FREELANCER, UserRole.ADMIN] },
+        { id: 'n3', label: 'Community', url: '/community', visibility: [UserRole.GUEST, UserRole.FREELANCER, UserRole.EMPLOYER, UserRole.ADMIN] }
     ],
     actions: { notifications: true, messages: true, orders: true, lists: true, switchSelling: true, profile: true },
     profileMenu: [
-        { id: 'pm-1', label: 'Dashboard', url: '/dashboard', visibility: [UserRole.FREELANCER, UserRole.EMPLOYER] },
-        { id: 'pm-2', label: 'Profile', url: '/profile', visibility: [UserRole.FREELANCER] },
-        { id: 'pm-3', label: 'Settings', url: '/settings', visibility: [UserRole.FREELANCER, UserRole.EMPLOYER] }
+        { id: 'pm1', label: 'Dashboard', url: '/dashboard', visibility: [UserRole.FREELANCER, UserRole.EMPLOYER, UserRole.ADMIN] },
+        { id: 'pm2', label: 'Settings', url: '/settings', visibility: [UserRole.FREELANCER, UserRole.EMPLOYER, UserRole.ADMIN] }
     ]
 };
 
-let CURRENT_TRENDING: TrendingConfig = {
-    enabled: true,
-    title: 'Trending Now',
-    categoryIds: [],
-    scrollBehavior: 'manual',
-    autoSlideInterval: 5000,
-    visibility: [UserRole.GUEST, UserRole.FREELANCER, UserRole.EMPLOYER]
-};
-
-let CURRENT_FOOTER: FooterConfig = {
-    id: 'footer-1',
-    description: 'The world\'s work marketplace.',
-    copyright: '© 2024 Geezle Inc.',
+const DEFAULT_FOOTER: FooterConfig = {
+    id: 'default', description: 'The next-generation freelance marketplace connecting employers with top talent.', copyright: '© 2024 Geezle Inc.', logoUrl: '',
     columns: [
-        { id: 'fc-1', title: 'For Clients', links: [{ id: 'l1', label: 'How to Hire', url: '/p/how-to-hire', visibility: [UserRole.GUEST], type: 'internal' }] },
-        { id: 'fc-2', title: 'For Talent', links: [{ id: 'l2', label: 'How to Find Work', url: '/p/how-to-work', visibility: [UserRole.GUEST], type: 'internal' }] }
+        { id: 'c1', title: 'Support', links: [{ id: 'l1', label: 'Help Center', url: '/support', type: 'internal', visibility: [] }] },
+        { id: 'c2', title: 'Community', links: [{ id: 'l2', label: 'Forum', url: '/community/forum', type: 'internal', visibility: [] }, { id: 'l3', label: 'Events', url: '/community/events', type: 'internal', visibility: [] }] }
     ],
-    contact: { adminEmail: 'admin@geezle.com', supportEmail: 'help@geezle.com', ticketRoute: '/support' },
+    contact: { adminEmail: 'admin@geezle.com', supportEmail: 'support@geezle.com', ticketRoute: '/support' },
     socials: [
-        { id: 'soc-1', platform: 'Twitter', url: 'https://twitter.com', enabled: true },
-        { id: 'soc-2', platform: 'LinkedIn', url: 'https://linkedin.com', enabled: true }
+        { id: 's1', platform: 'Twitter', url: '#', enabled: true, icon: '' },
+        { id: 's2', platform: 'LinkedIn', url: '#', enabled: true, icon: '' }
     ]
 };
 
-let CURRENT_SLIDES: HomeSlide[] = [
+const DEFAULT_HERO: HeroSearchConfig = {
+    headline: "Find the perfect freelance services",
+    subheadline: "Connect with top talent, manage projects, and pay securely via Escrow.",
+    searchPlaceholder: "Try 'Logo Design' or 'React Developer'...",
+    searchSize: "large",
+    quickTags: [
+        { id: 'qt1', label: 'Web Development', url: '/browse?category=Development', color: 'blue' },
+        { id: 'qt2', label: 'Graphic Design', url: '/browse?category=Design', color: 'purple' },
+        { id: 'qt3', label: 'Writing', url: '/browse?category=Writing', color: 'green' }
+    ],
+    trustedBrands: { 
+        enabled: true, 
+        title: "Trusted by industry leaders", 
+        logos: [
+            { id: 'tb1', src: 'https://upload.wikimedia.org/wikipedia/commons/2/2f/Google_2015_logo.svg', alt: 'Google' },
+            { id: 'tb2', src: 'https://upload.wikimedia.org/wikipedia/commons/5/51/IBM_logo.svg', alt: 'IBM' },
+            { id: 'tb3', src: 'https://upload.wikimedia.org/wikipedia/commons/a/a9/Amazon_logo.svg', alt: 'Amazon' }
+        ] 
+    },
+    valueProp: { enabled: true, heading: "Why us?", badges: [] }
+};
+
+const DEFAULT_SECTIONS: HomepageSection[] = [
+    { id: 'hero', type: 'hero', name: 'Hero', isActive: true, position: 1, content: DEFAULT_HERO },
+    { id: 'skill_match', type: 'skill_matching', name: 'AI Match', isActive: true, position: 2, content: {} },
+    { id: 'top_pro', type: 'top_pro_services', name: 'Pro Services', isActive: true, position: 3, content: { title: "Top Rated Professional Services" } },
+    { id: 'market', type: 'market_insights', name: 'Market Insights', isActive: true, position: 4, content: { title: "Trending in the Market" } },
+    { id: 'trust', type: 'trust_security', name: 'Trust & Safety', isActive: true, position: 5, content: { title: "Your Safety is Our Priority" } },
+    { id: 'cta', type: 'cta', name: 'Bottom CTA', isActive: true, position: 6, content: { headline: "Ready to get started?", subheadline: "Join our community today.", buttonText: "Join Now", buttonLink: "/auth/signup" }, style: { theme: 'blue' } }
+];
+
+const DEFAULT_SLIDES: HomeSlide[] = [
     {
-        id: 'slide-1',
-        mediaType: 'image',
+        id: 'slide-1', mediaType: 'image',
         mediaUrl: 'https://images.unsplash.com/photo-1522071820081-009f0129c71c?auto=format&fit=crop&w=1920&q=80',
-        title: 'Find the perfect professional for you',
-        subtitle: 'Get work done with confidence',
-        redirectUrl: '/browse',
-        roleVisibility: [UserRole.GUEST, UserRole.EMPLOYER],
-        sortOrder: 1,
-        isActive: true,
-        createdAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString()
+        title: 'Unlock Your Potential', subtitle: 'Find the best freelance jobs in tech, design, and marketing.',
+        redirectUrl: '/browse', roleVisibility: [UserRole.GUEST, UserRole.FREELANCER, UserRole.EMPLOYER],
+        sortOrder: 1, isActive: true, createdAt: '', updatedAt: '', backgroundColor: '#111827'
     }
 ];
-
-const DEFAULT_LANDING_CONTENT: LandingContent = {
-    hero: {
-        headline: 'Find the perfect freelance services for your business',
-        subheadline: 'Work with talented people at the most affordable price to get the most out of your time and cost',
-        primaryCtaText: 'Find Talent',
-        primaryCtaLink: '/browse',
-        secondaryCtaText: 'Find Work',
-        secondaryCtaLink: '/browse-jobs',
-        backgroundImage: 'https://images.unsplash.com/photo-1522071820081-009f0129c71c?auto=format&fit=crop&w=1920&q=80',
-        showTrustBadges: true
-    },
-    stats: [
-        { value: '1M+', label: 'Total Freelancers' },
-        { value: '98%', label: 'Positive Reviews' },
-        { value: '24H', label: 'Average Turnaround' }
-    ],
-    howItWorks: {
-        showVideo: false,
-        employerSteps: [
-            { icon: 'Search', title: 'Find Talent', description: 'Post a job or search for freelancers' },
-            { icon: 'CheckCircle', title: 'Hire', description: 'Choose the best person for the job' },
-            { icon: 'DollarSign', title: 'Pay', description: 'Pay safely through our platform' }
-        ],
-        freelancerSteps: [
-            { icon: 'UserPlus', title: 'Create Profile', description: 'Showcase your skills' },
-            { icon: 'Briefcase', title: 'Find Work', description: 'Apply to jobs that match your skills' },
-            { icon: 'DollarSign', title: 'Get Paid', description: 'Receive payment securely' }
-        ]
-    },
-    whyChoose: {},
-    testimonials: [],
-    cta: {
-        headline: 'Ready to get started?',
-        subheadline: 'Join thousands of satisfied customers.',
-        buttonText: 'Join Now',
-        buttonLink: '/auth/signup'
-    }
-};
-
-const INITIAL_HOMEPAGE_SECTIONS: HomepageSection[] = [
-    { id: 'sec-1', type: 'hero', name: 'Hero Banner', isActive: true, position: 0, content: DEFAULT_LANDING_CONTENT.hero },
-    { id: 'sec-2', type: 'trust', name: 'Trust Stats', isActive: true, position: 1, content: { stats: DEFAULT_LANDING_CONTENT.stats } },
-    { id: 'sec-3', type: 'categories', name: 'Popular Categories', isActive: true, position: 2, content: { showIcons: true, viewMoreLink: '/browse' } },
-    { id: 'sec-4', type: 'featured', name: 'Featured Gigs', isActive: true, position: 3, content: { source: 'gigs', count: 4, layout: 'grid', autoRotate: false } },
-    { id: 'sec-5', type: 'cta', name: 'Bottom CTA', isActive: true, position: 4, content: DEFAULT_LANDING_CONTENT.cta }
-];
-
-let homepageSections: HomepageSection[] = [...INITIAL_HOMEPAGE_SECTIONS];
-let abTests: ABTest[] = [];
-let homepageTemplates: HomepageTemplate[] = [];
-let homepageAnalytics: HomepageAnalytics = {
-    views: 12500,
-    ctaClicks: 3200,
-    bounceRate: 45,
-    avgTimeOnPage: 120,
-    deviceBreakdown: { desktop: 60, mobile: 35, tablet: 5 },
-    sectionEngagement: []
-};
-let homepageHistory: HomepageVersion[] = [];
-
-let MOCK_BLOG_POSTS: BlogPost[] = [
-    {
-        id: 'post-1',
-        title: 'How to hire the best freelancers',
-        slug: 'how-to-hire-freelancers',
-        content: '<p>Hiring freelancers can be tricky...</p>',
-        blocks: [],
-        excerpt: 'Tips for finding the right talent.',
-        shortDescription: 'Tips for finding the right talent.',
-        featuredImage: 'https://images.unsplash.com/photo-1516321318423-f06f85e504b3?auto=format&fit=crop&w=800&q=80',
-        status: 'published',
-        visibility: 'public',
-        authorName: 'Admin',
-        categoryId: 'cat-1',
-        categoryName: 'Hiring',
-        tags: ['hiring', 'tips'],
-        views: 120,
-        seo: { metaTitle: 'How to Hire', metaDescription: 'Guide to hiring.' },
-        allowComments: true,
-        isFeatured: true,
-        createdAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString()
-    }
-];
-
-let MOCK_BLOG_CATEGORIES: BlogCategory[] = [
-    { id: 'cat-1', name: 'Hiring', slug: 'hiring', description: 'Tips for employers', status: 'active', count: 1 }
-];
-
-let BLOG_SETTINGS: BlogSettings = {
-    pageTitle: 'Geezle Blog',
-    metaTitle: 'Geezle Blog - Insights',
-    metaDescription: 'Latest news and tips.',
-    bannerImage: '',
-    postsPerPage: 10,
-    defaultCategory: 'cat-1',
-    showAuthor: true,
-    showDate: true
-};
-
-let MOCK_PAGES: Record<string, StaticPage> = {
-    'about-us': {
-        id: 'p-1',
-        title: 'About Us',
-        slug: 'about-us',
-        content: '<p>We are Geezle.</p>',
-        blocks: [],
-        status: 'PUBLISHED',
-        visibility: 'public',
-        updatedAt: new Date().toISOString(),
-        categoryId: 'pc-1'
-    }
-};
-
-let MOCK_PAGE_CATEGORIES: PageCategory[] = [
-    { id: 'pc-1', name: 'Company', slug: 'company', count: 1, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(), status: 'active' }
-];
-
-let MOCK_MEDIA: MediaItem[] = [];
-
-let kycDocs: KYCDocument[] = [...MOCK_KYC_DOCS];
-
-let CURRENT_AFFILIATE_CONTENT: AffiliatePageContent = {
-    heroTitle: 'Earn Money by Promoting Geezle',
-    heroSubtitle: 'Join our affiliate program and earn commission on every sale.',
-    heroButtonText: 'Become an Affiliate',
-    benefits: [
-        { title: 'High Commission', description: 'Earn up to 20% commission.', icon: 'dollar' },
-        { title: 'Fast Payouts', description: 'Get paid monthly.', icon: 'trending' },
-        { title: 'Marketing Tools', description: 'Access banners and links.', icon: 'users' }
-    ]
-};
-
-// ... serializeBlocksToHtml helper ...
-const serializeBlocksToHtml = (blocks: ContentBlock[]): string => {
-    return blocks.map(b => {
-        switch(b.type) {
-            case 'heading': return `<h2>${b.content}</h2>`;
-            case 'image': return `<img src="${b.content}" alt="Image" />`;
-            default: return `<p>${b.content}</p>`;
-        }
-    }).join('');
-};
-
-// --- NAVIGATION & ACTIVITY DEFAULTS ---
-const DEFAULT_ACTIVITY_CONFIG: ActivityConfig = {
-    icons: [
-        { id: 'nav-notif', type: 'notifications', label: 'Notifications', isEnabled: true, showLabel: false, sortOrder: 1, roles: [UserRole.FREELANCER, UserRole.EMPLOYER, UserRole.ADMIN] },
-        { id: 'nav-msg', type: 'messages', label: 'Messages', isEnabled: true, showLabel: false, sortOrder: 2, roles: [UserRole.FREELANCER, UserRole.EMPLOYER, UserRole.ADMIN] },
-        { id: 'nav-fav', type: 'favorites', label: 'Favorites', isEnabled: true, showLabel: false, sortOrder: 3, roles: [UserRole.FREELANCER, UserRole.EMPLOYER] },
-        { id: 'nav-help', type: 'help', label: 'Help', isEnabled: true, showLabel: false, sortOrder: 4, roles: [UserRole.FREELANCER, UserRole.EMPLOYER, UserRole.GUEST] },
-    ],
-    helpMenu: [
-        { id: 'help-1', label: 'Help Center', url: '/support', target: '_self', isEnabled: true },
-        { id: 'help-2', label: 'Community Forum', url: '/community/forum', target: '_self', isEnabled: true },
-        { id: 'help-3', label: 'Blog', url: '/blog', target: '_self', isEnabled: true },
-        { id: 'help-4', label: 'Contact Support', url: '/support?tab=create', target: '_self', isEnabled: true },
-    ],
-    design: {
-        iconStyle: 'outline',
-        iconSize: 20,
-        badgeColor: '#EF4444',
-        showBadges: true
-    }
-};
-
-let CURRENT_ACTIVITY_CONFIG: ActivityConfig = { ...DEFAULT_ACTIVITY_CONFIG };
 
 export const CMSService = {
-  // --- Navigation & Activity Config ---
-  getActivityConfig: async (): Promise<ActivityConfig> => {
-      return new Promise(resolve => {
-          setTimeout(() => {
-            const stored = localStorage.getItem('geezle_activity_config');
-            if (stored) {
-                resolve(JSON.parse(stored));
-            } else {
-                resolve({ ...CURRENT_ACTIVITY_CONFIG });
-            }
-          }, 100);
-      });
-  },
+    getSettings: async (): Promise<PlatformSettings> => {
+        const data = await api.get('/admin/settings');
+        return data || {
+            siteName: 'Geezle', tagline: 'The Freelance Marketplace', logoUrl: '', faviconUrl: '',
+            adminEmail: 'admin@geezle.com', supportEmail: 'support@geezle.com',
+            footerAboutTitle: 'About Geezle', footerAboutText: 'Connecting talent with opportunity.', footerCopyright: '© 2024 Geezle Inc.',
+            footerLinks: [], socialLinks: [],
+            system: { maintenanceMode: false, registrationsEnabled: true, kycEnforced: false, admin2FA: false }
+        };
+    },
 
-  saveActivityConfig: async (config: ActivityConfig): Promise<ActivityConfig> => {
-      return new Promise(resolve => {
-          CURRENT_ACTIVITY_CONFIG = config;
-          localStorage.setItem('geezle_activity_config', JSON.stringify(config));
-          resolve(config);
-      });
-  },
+    updateSettings: async (settings: Partial<PlatformSettings>) => api.post('/admin/settings/update', settings).then(r => r?.data || settings),
 
-  // ... (rest of the existing methods below remain unchanged)
-  // ... existing export methods wrapper
-  getSettings: async (): Promise<PlatformSettings> => {
-    return new Promise((resolve) => setTimeout(() => resolve({ ...CURRENT_SETTINGS }), 50));
-  },
-  updateSettings: async (settings: Partial<PlatformSettings>): Promise<PlatformSettings> => {
-    return new Promise((resolve) => {
-        setTimeout(() => {
-            if(settings.system) {
-                CURRENT_SETTINGS.system = { ...CURRENT_SETTINGS.system, ...settings.system };
-                delete settings.system; 
-            }
-            CURRENT_SETTINGS = { ...CURRENT_SETTINGS, ...settings };
-            localStorage.setItem('geezle_settings', JSON.stringify(CURRENT_SETTINGS));
-            resolve(CURRENT_SETTINGS);
-        }, 300);
-    });
-  },
-  getHeaderConfig: async (): Promise<HeaderConfig> => {
-      return new Promise(resolve => setTimeout(() => resolve({ ...CURRENT_HEADER }), 50));
-  },
-  saveHeaderConfig: async (config: HeaderConfig): Promise<HeaderConfig> => {
-      return new Promise(resolve => {
-          CURRENT_HEADER = config;
-          localStorage.setItem('geezle_header_config', JSON.stringify(config));
-          resolve(config);
-      });
-  },
-  getTrendingConfig: async (): Promise<TrendingConfig> => {
-      return new Promise(resolve => setTimeout(() => resolve({ ...CURRENT_TRENDING }), 50));
-  },
-  saveTrendingConfig: async (config: TrendingConfig): Promise<TrendingConfig> => {
-      return new Promise(resolve => {
-          CURRENT_TRENDING = config;
-          localStorage.setItem('geezle_trending_config', JSON.stringify(config));
-          resolve(config);
-      });
-  },
-  getFooterConfig: async (): Promise<FooterConfig> => {
-      return new Promise(resolve => setTimeout(() => resolve({ ...CURRENT_FOOTER }), 50));
-  },
-  saveFooterConfig: async (config: FooterConfig): Promise<FooterConfig> => {
-      return new Promise(resolve => {
-          CURRENT_FOOTER = config;
-          localStorage.setItem('geezle_footer_config', JSON.stringify(config));
-          resolve(config);
-      });
-  },
-  getHomeSlides: async (): Promise<HomeSlide[]> => {
-      return new Promise(resolve => setTimeout(() => resolve([...CURRENT_SLIDES]), 200));
-  },
-  saveHomeSlide: async (slide: HomeSlide): Promise<HomeSlide> => {
-      return new Promise(resolve => {
-          const idx = CURRENT_SLIDES.findIndex(s => s.id === slide.id);
-          if (idx >= 0) CURRENT_SLIDES[idx] = slide;
-          else CURRENT_SLIDES.push(slide);
-          
-          CURRENT_SLIDES.sort((a,b) => a.sortOrder - b.sortOrder);
-          localStorage.setItem('geezle_home_slides', JSON.stringify(CURRENT_SLIDES));
-          resolve(slide);
-      });
-  },
-  deleteHomeSlide: async (id: string): Promise<void> => {
-      return new Promise(resolve => {
-          CURRENT_SLIDES = CURRENT_SLIDES.filter(s => s.id !== id);
-          localStorage.setItem('geezle_home_slides', JSON.stringify(CURRENT_SLIDES));
-          resolve();
-      });
-  },
-  updateHomeSlideOrder: async (slides: HomeSlide[]): Promise<void> => {
-      return new Promise(resolve => {
-          CURRENT_SLIDES = slides;
-          localStorage.setItem('geezle_home_slides', JSON.stringify(CURRENT_SLIDES));
-          resolve();
-      });
-  },
-  getLandingContent: async (): Promise<LandingContent> => {
-    return new Promise((resolve) => setTimeout(() => resolve(DEFAULT_LANDING_CONTENT), 50));
-  },
-  getHomepageSections: async (userContext?: { role?: UserRole, location?: string }): Promise<HomepageSection[]> => {
-    return new Promise((resolve) => {
-      setTimeout(() => {
-        const now = new Date();
+    getHomepageSections: async (options?: { role?: UserRole; location?: string }) => {
+        const data = await api.get('/cms/homepage/sections');
+        let sections: HomepageSection[] = data || DEFAULT_SECTIONS;
         
-        let filteredSections = homepageSections.filter(section => {
-          if (section.startAt && new Date(section.startAt) > now) return false;
-          if (section.endAt && new Date(section.endAt) < now) return false;
-          if (userContext?.role && section.targeting?.roles && section.targeting.roles.length > 0) {
-             if (!section.targeting.roles.includes(userContext.role)) return false;
-          }
-          return true;
-        });
+        if (options?.role) {
+            sections = sections.filter(s => {
+                if (!s.targeting || !s.targeting.roles || s.targeting.roles.length === 0) return true;
+                return s.targeting.roles.includes(options.role!);
+            });
+        }
+        return sections;
+    },
 
-        filteredSections = filteredSections.map(section => {
-           if (section.abTestId) {
-              const test = abTests.find(t => t.id === section.abTestId && t.status === 'running');
-              if (test) {
-                 const showVariant = Math.random() * 100 < test.trafficSplit;
-                 if (showVariant && test.variants.length > 0) {
-                    const variant = test.variants[Math.floor(Math.random() * test.variants.length)];
-                    return { ...variant, id: section.id }; 
-                 }
-              }
-           }
-           return section;
-        });
+    saveHomepageSection: async (section: HomepageSection) => api.post('/cms/homepage/sections/update', section),
+    
+    getHomeSlides: async (): Promise<HomeSlide[]> => {
+        const data = await api.get('/cms/slides');
+        return data || DEFAULT_SLIDES;
+    },
+    
+    saveHomeSlide: async (slide: HomeSlide) => api.post('/cms/slides/save', slide),
+    deleteHomeSlide: async (id: string) => api.post('/cms/slides/delete', { id }),
+    updateHomeSlideOrder: async (slides: HomeSlide[]) => api.post('/cms/slides/reorder', { slides }),
 
-        resolve([...filteredSections].sort((a,b) => a.position - b.position));
-      }, 200);
-    });
-  },
-  saveHomepageSection: async (section: HomepageSection): Promise<HomepageSection> => {
-    return new Promise((resolve) => {
-        setTimeout(() => {
-            const idx = homepageSections.findIndex(s => s.id === section.id);
-            if(idx >= 0) {
-                homepageSections[idx] = section;
-            } else {
-                homepageSections.push(section);
-            }
-            resolve(section);
-        }, 300);
-    });
-  },
-  addHomepageSection: async (type: HomepageSectionType): Promise<HomepageSection> => {
-      return new Promise(resolve => {
-          setTimeout(() => {
-              const newSection: HomepageSection = {
-                  id: `sec-${Math.random().toString(36).substr(2, 9)}`,
-                  type,
-                  name: `New ${type.charAt(0).toUpperCase() + type.slice(1)} Section`,
-                  isActive: true,
-                  position: homepageSections.length,
-                  content: INITIAL_HOMEPAGE_SECTIONS.find(s => s.type === type)?.content || {}
-              };
-              homepageSections.push(newSection);
-              resolve(newSection);
-          }, 200);
-      });
-  },
-  updateSectionOrder: async (sections: HomepageSection[]): Promise<void> => {
-      return new Promise(resolve => {
-          homepageSections = sections;
-          resolve();
-      });
-  },
-  deleteHomepageSection: async (id: string): Promise<void> => {
-      return new Promise(resolve => {
-          homepageSections = homepageSections.filter(s => s.id !== id);
-          resolve();
-      });
-  },
-  getTemplates: async (): Promise<HomepageTemplate[]> => {
-      return new Promise(resolve => setTimeout(() => resolve([...homepageTemplates]), 200));
-  },
-  saveTemplate: async (template: HomepageTemplate): Promise<HomepageTemplate> => {
-      return new Promise(resolve => {
-          homepageTemplates.push(template);
-          resolve(template);
-      });
-  },
-  loadTemplate: async (templateId: string): Promise<HomepageSection | null> => {
-      return new Promise(resolve => {
-          const tpl = homepageTemplates.find(t => t.id === templateId);
-          if (tpl) {
-              const newSection: HomepageSection = {
-                  id: `sec-${Math.random().toString(36).substr(2, 9)}`,
-                  type: tpl.type,
-                  name: `${tpl.name} (Copy)`,
-                  isActive: true,
-                  position: homepageSections.length,
-                  content: { ...tpl.content },
-                  style: { ...tpl.style }
-              };
-              homepageSections.push(newSection);
-              resolve(newSection);
-          } else {
-              resolve(null);
-          }
-      });
-  },
-  getABTests: async (): Promise<ABTest[]> => {
-      return new Promise(resolve => setTimeout(() => resolve([...abTests]), 200));
-  },
-  createABTest: async (test: Partial<ABTest>): Promise<ABTest> => {
-      return new Promise(resolve => {
-          const newTest: ABTest = {
-              id: `ab-${Math.random().toString(36).substr(2, 9)}`,
-              name: test.name || 'New A/B Test',
-              sectionId: test.sectionId || '',
-              variants: test.variants || [],
-              trafficSplit: test.trafficSplit || 50,
-              status: 'running',
-              metrics: { views: 0, conversions: 0 },
-              createdAt: new Date().toISOString()
-          };
-          abTests.push(newTest);
-          resolve(newTest);
-      });
-  },
-  saveABTest: async (test: ABTest): Promise<ABTest> => {
-      return new Promise(resolve => {
-          const idx = abTests.findIndex(t => t.id === test.id);
-          if (idx >= 0) abTests[idx] = test;
-          else abTests.push(test);
-          resolve(test);
-      });
-  },
-  getHomepageAnalytics: async (): Promise<HomepageAnalytics> => {
-      return new Promise(resolve => setTimeout(() => resolve(homepageAnalytics), 200));
-  },
-  getHomepageHistory: async (): Promise<HomepageVersion[]> => {
-      return new Promise(resolve => setTimeout(() => resolve([...homepageHistory]), 200));
-  },
-  createHomepageVersion: async (description: string): Promise<void> => {
-      return new Promise(resolve => {
-          const version: HomepageVersion = {
-              id: Math.random().toString(36).substr(2, 9),
-              createdAt: new Date().toISOString(),
-              createdBy: 'Admin',
-              snapshot: JSON.parse(JSON.stringify(homepageSections)),
-              description
-          };
-          homepageHistory.unshift(version);
-          resolve();
-      });
-  },
-  restoreHomepageVersion: async (versionId: string): Promise<void> => {
-      return new Promise(resolve => {
-          const version = homepageHistory.find(v => v.id === versionId);
-          if (version) {
-              homepageSections = JSON.parse(JSON.stringify(version.snapshot));
-          }
-          resolve();
-      });
-  },
-  getBlogPosts: async (): Promise<BlogPost[]> => {
-    return new Promise((resolve) => setTimeout(() => resolve([...MOCK_BLOG_POSTS]), 300));
-  },
-  getBlogPostBySlug: async (slug: string): Promise<BlogPost | undefined> => {
-    return new Promise((resolve) => setTimeout(() => resolve(MOCK_BLOG_POSTS.find(p => p.slug === slug)), 200));
-  },
-  saveBlogPost: async (post: BlogPost): Promise<BlogPost> => {
-      return new Promise(resolve => {
-          setTimeout(() => {
-              if (post.blocks && post.blocks.length > 0) {
-                  post.content = serializeBlocksToHtml(post.blocks);
-              }
-              const idx = MOCK_BLOG_POSTS.findIndex(p => p.id === post.id);
-              post.updatedAt = new Date().toISOString();
-              if(idx >= 0) MOCK_BLOG_POSTS[idx] = post;
-              else MOCK_BLOG_POSTS.unshift(post);
-              resolve(post);
-          }, 300);
-      });
-  },
-  deleteBlogPost: async (id: string): Promise<void> => {
-      return new Promise(resolve => {
-          MOCK_BLOG_POSTS = MOCK_BLOG_POSTS.filter(p => p.id !== id);
-          resolve();
-      });
-  },
-  getBlogCategories: async (): Promise<BlogCategory[]> => {
-      return new Promise(resolve => setTimeout(() => resolve([...MOCK_BLOG_CATEGORIES]), 200));
-  },
-  saveBlogCategory: async (category: BlogCategory): Promise<BlogCategory> => {
-      return new Promise(resolve => {
-          const idx = MOCK_BLOG_CATEGORIES.findIndex(c => c.id === category.id);
-          if (idx >= 0) MOCK_BLOG_CATEGORIES[idx] = category;
-          else MOCK_BLOG_CATEGORIES.push(category);
-          resolve(category);
-      });
-  },
-  deleteBlogCategory: async (id: string): Promise<void> => {
-      return new Promise(resolve => {
-          MOCK_BLOG_CATEGORIES = MOCK_BLOG_CATEGORIES.filter(c => c.id !== id);
-          resolve();
-      });
-  },
-  getBlogSettings: async (): Promise<BlogSettings> => {
-      return new Promise(resolve => setTimeout(() => resolve({...BLOG_SETTINGS}), 100));
-  },
-  updateBlogSettings: async (settings: Partial<BlogSettings>): Promise<BlogSettings> => {
-      return new Promise(resolve => {
-          BLOG_SETTINGS = { ...BLOG_SETTINGS, ...settings };
-          resolve(BLOG_SETTINGS);
-      });
-  },
-  getPages: async (): Promise<StaticPage[]> => {
-      return new Promise(resolve => setTimeout(() => resolve(Object.values(MOCK_PAGES)), 200));
-  },
-  getPageBySlug: async (slug: string): Promise<StaticPage | undefined> => {
-    return new Promise((resolve) => setTimeout(() => resolve(MOCK_PAGES[slug]), 200));
-  },
-  savePage: async (page: StaticPage): Promise<StaticPage> => {
-      return new Promise(resolve => {
-          setTimeout(() => {
-              if (page.blocks && page.blocks.length > 0) {
-                  page.content = serializeBlocksToHtml(page.blocks);
-              }
-              page.updatedAt = new Date().toISOString();
-              const existingSlug = Object.keys(MOCK_PAGES).find(key => MOCK_PAGES[key].id === page.id);
-              if (existingSlug && existingSlug !== page.slug) {
-                  delete MOCK_PAGES[existingSlug];
-              }
-              if (!existingSlug && MOCK_PAGES[page.slug]) {
-                  page.slug = `${page.slug}-${Math.floor(Math.random() * 1000)}`;
-              }
-              MOCK_PAGES[page.slug] = page;
-              resolve(page);
-          }, 400);
-      });
-  },
-  deletePage: async (id: string): Promise<void> => {
-      return new Promise(resolve => {
-          const slug = Object.keys(MOCK_PAGES).find(key => MOCK_PAGES[key].id === id);
-          if (slug) delete MOCK_PAGES[slug];
-          resolve();
-      });
-  },
-  getPageCategories: async (): Promise<PageCategory[]> => {
-      return new Promise(resolve => setTimeout(() => resolve([...MOCK_PAGE_CATEGORIES]), 200));
-  },
-  savePageCategory: async (category: PageCategory): Promise<PageCategory> => {
-      return new Promise(resolve => {
-          setTimeout(() => {
-              const idx = MOCK_PAGE_CATEGORIES.findIndex(c => c.id === category.id);
-              if (idx >= 0) {
-                  MOCK_PAGE_CATEGORIES[idx] = { ...category, updatedAt: new Date().toISOString() };
-              } else {
-                  MOCK_PAGE_CATEGORIES.push({ 
-                      ...category, 
-                      id: category.id || Math.random().toString(36).substr(2, 9),
-                      createdAt: new Date().toISOString(),
-                      updatedAt: new Date().toISOString(),
-                      count: 0
-                  });
-              }
-              resolve(category);
-          }, 200);
-      });
-  },
-  deletePageCategory: async (id: string): Promise<void> => {
-      return new Promise(resolve => {
-          MOCK_PAGE_CATEGORIES = MOCK_PAGE_CATEGORIES.filter(c => c.id !== id);
-          resolve();
-      });
-  },
-  getMedia: async (): Promise<MediaItem[]> => {
-      return new Promise(resolve => setTimeout(() => resolve([...MOCK_MEDIA]), 200));
-  },
-  
-  // UPDATED: Using FileService for unified upload handling and persistence
-  uploadMedia: async (file: File): Promise<MediaItem> => {
-      // Use FileService to persist as base64 in local storage for demo purposes
-      // instead of failing API call
-      const uploaded = await FileService.uploadFile('admin', file, 'document');
-      const mediaItem: MediaItem = {
-          id: uploaded.id,
-          name: uploaded.name,
-          url: uploaded.url,
-          type: uploaded.type,
-          size: uploaded.size,
-          createdAt: uploaded.createdAt
-      };
-      
-      // Update local MOCK_MEDIA for getMedia calls
-      MOCK_MEDIA.unshift(mediaItem);
-      
-      return mediaItem;
-  },
+    getHeroSearchConfig: async () => (await api.get('/cms/hero-search')) || DEFAULT_HERO,
+    saveHeroSearchConfig: async (config: HeroSearchConfig) => api.post('/cms/hero-search', config),
 
-  deleteMedia: async (id: string): Promise<void> => {
-      return new Promise(resolve => {
-          MOCK_MEDIA = MOCK_MEDIA.filter(m => m.id !== id);
-          resolve();
-      });
-  },
-  getKYCRequests: async (): Promise<KYCDocument[]> => {
-      return new Promise(resolve => setTimeout(() => resolve(kycDocs), 200));
-  },
-  submitKYC: async (doc: KYCDocument): Promise<void> => {
-      return new Promise(resolve => {
-          setTimeout(() => {
-              kycDocs = [doc, ...kycDocs];
-              resolve();
-          }, 500);
-      });
-  },
-  updateKYCStatus: async (id: string, status: KYCDocument['status'], notes?: string): Promise<void> => {
-      return new Promise(resolve => {
-          setTimeout(() => {
-              kycDocs = kycDocs.map(doc => doc.id === id ? { ...doc, status, adminNotes: notes } : doc);
-              resolve();
-          }, 300);
-      });
-  },
-  
-  getAffiliateContent: async (): Promise<AffiliatePageContent> => {
-    return new Promise(resolve => {
-        setTimeout(() => {
-          const stored = localStorage.getItem('geezle_affiliate_content');
-          if (stored) {
-              resolve(JSON.parse(stored));
-          } else {
-              resolve({ ...CURRENT_AFFILIATE_CONTENT });
-          }
-        }, 100);
-    });
-},
+    getHeaderConfig: async () => (await api.get('/cms/header')) || DEFAULT_HEADER,
+    saveHeaderConfig: async (config: HeaderConfig) => api.post('/cms/header', config),
+    
+    getFooterConfig: async () => (await api.get('/cms/footer')) || DEFAULT_FOOTER,
+    saveFooterConfig: async (config: FooterConfig) => api.post('/cms/footer', config),
 
-saveAffiliateContent: async (content: AffiliatePageContent): Promise<AffiliatePageContent> => {
-    return new Promise(resolve => {
-        CURRENT_AFFILIATE_CONTENT = content;
-        localStorage.setItem('geezle_affiliate_content', JSON.stringify(content));
-        resolve(content);
-    });
-},
+    getTrendingConfig: async () => (await api.get('/cms/trending')) || { enabled: true, title: 'Trending Categories', categoryIds: [], visibility: ['guest', 'freelancer', 'employer'], scrollBehavior: 'manual', autoSlideInterval: 5000 },
+    saveTrendingConfig: async (config: TrendingConfig) => api.post('/cms/trending', config),
 
+    getActivityConfig: async () => (await api.get('/cms/activity')) || { 
+        icons: [
+            { id: 'notif', type: 'notifications', label: 'Notifications', isEnabled: true, showLabel: false, sortOrder: 1, roles: [UserRole.FREELANCER, UserRole.EMPLOYER, UserRole.ADMIN] },
+            { id: 'msg', type: 'messages', label: 'Messages', isEnabled: true, showLabel: false, sortOrder: 2, roles: [UserRole.FREELANCER, UserRole.EMPLOYER, UserRole.ADMIN] }
+        ], 
+        helpMenu: [], 
+        design: { iconStyle: 'outline', iconSize: 20, badgeColor: '#EF4444', showBadges: true } 
+    },
+    saveActivityConfig: async (config: ActivityConfig) => api.post('/cms/activity', config),
+
+    // Stubs with correct signatures to prevent runtime errors
+    getLandingContent: async () => ({}),
+    uploadMedia: async (file: File) => ({ id: Date.now().toString(), url: URL.createObjectURL(file), name: file.name, type: 'image', size: file.size, createdAt: '' }),
+    
+    getTemplates: async () => [],
+    saveTemplate: async (t: any) => t,
+    loadTemplate: async () => null,
+    getABTests: async () => [],
+    createABTest: async (t: any) => t,
+    saveABTest: async (t: any) => t,
+    getHomepageAnalytics: async () => ({ views: 12500, ctaClicks: 3200, bounceRate: 42, avgTimeOnPage: 145, deviceBreakdown: { desktop: 60, mobile: 35, tablet: 5 }, sectionEngagement: [] }),
+    getHomepageHistory: async () => [],
+    createHomepageVersion: async () => {},
+    restoreHomepageVersion: async () => {},
+    
+    getBlogPosts: async () => [],
+    getBlogPostBySlug: async (slug: string) => undefined,
+    saveBlogPost: async (p: any) => p,
+    deleteBlogPost: async (id: string) => {},
+    getBlogCategories: async () => [],
+    saveBlogCategory: async (c: any) => c,
+    deleteBlogCategory: async (id: string) => {},
+    getBlogSettings: async () => ({ pageTitle: 'Blog', metaTitle: '', metaDescription: '', bannerImage: '', postsPerPage: 10, defaultCategory: '', showAuthor: true, showDate: true }),
+    updateBlogSettings: async (s: any) => s,
+
+    getPages: async () => [],
+    getPageBySlug: async (slug: string) => undefined,
+    savePage: async (p: any) => p,
+    deletePage: async (id: string) => {},
+    getPageCategories: async () => [],
+    savePageCategory: async (c: any) => c,
+    deletePageCategory: async (id: string) => {},
+
+    getMedia: async () => [],
+    deleteMedia: async () => {},
+    
+    getKYCRequests: async () => [],
+    submitKYC: async (data: any) => {},
+    updateKYCStatus: async (id: string, status: string) => {},
+    
+    getAffiliateContent: async () => ({ heroTitle: 'Become an Affiliate', heroSubtitle: 'Earn rewards', heroButtonText: 'Join Now', benefits: [] }),
+    saveAffiliateContent: async (c: any) => c,
+
+    addHomepageSection: async (type: any) => ({ id: `new-${Date.now()}`, type, name: 'New Section', isActive: true, position: 99, content: {} }),
+    updateSectionOrder: async (sections: any[]) => {},
+    deleteHomepageSection: async (id: string) => {}
 };

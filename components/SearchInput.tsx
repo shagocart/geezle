@@ -6,7 +6,13 @@ import { SearchService } from '../services/search';
 import { SearchSuggestion, UserRole } from '../types';
 import { useUser } from '../context/UserContext';
 
-const SearchInput = ({ placeholder = "Search...", className = "" }: { placeholder?: string, className?: string }) => {
+interface SearchInputProps {
+    placeholder?: string;
+    className?: string;
+    size?: 'normal' | 'large' | 'xl';
+}
+
+const SearchInput: React.FC<SearchInputProps> = ({ placeholder = "Search...", className = "", size = 'normal' }) => {
     const [query, setQuery] = useState('');
     const [suggestions, setSuggestions] = useState<SearchSuggestion[]>([]);
     const [isOpen, setIsOpen] = useState(false);
@@ -73,15 +79,27 @@ const SearchInput = ({ placeholder = "Search...", className = "" }: { placeholde
         setIsOpen(false);
     };
 
+    const sizeClasses = {
+        normal: "py-3 text-sm rounded-full",
+        large: "py-4 text-base rounded-2xl",
+        xl: "py-5 text-lg rounded-2xl"
+    };
+
+    const iconSizes = {
+        normal: "h-5 w-5",
+        large: "h-6 w-6",
+        xl: "h-7 w-7"
+    };
+
     return (
-        <div className={`relative w-full max-w-2xl ${className}`} ref={containerRef}>
+        <div className={`relative w-full ${className}`} ref={containerRef}>
             <div className="relative group">
-                <div className="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none">
-                    <Search className="h-5 w-5 text-gray-400 group-focus-within:text-blue-500 transition-colors" />
+                <div className={`absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none`}>
+                    <Search className={`${iconSizes[size]} text-gray-400 group-focus-within:text-blue-500 transition-colors`} />
                 </div>
                 <input
                     type="text"
-                    className="block w-full pl-12 pr-10 py-4 border border-gray-200 rounded-full leading-5 bg-white shadow-sm placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all duration-200 text-base"
+                    className={`block w-full pl-12 pr-12 border border-gray-200 leading-5 bg-white shadow-sm placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all duration-200 ${sizeClasses[size]}`}
                     placeholder={placeholder}
                     value={query}
                     onChange={(e) => { setQuery(e.target.value); setIsOpen(true); }}
@@ -100,7 +118,7 @@ const SearchInput = ({ placeholder = "Search...", className = "" }: { placeholde
 
             {/* Dropdown */}
             {isOpen && (suggestions.length > 0 || query.length === 0) && (
-                <div className="absolute top-full left-0 right-0 mt-2 bg-white rounded-2xl shadow-xl border border-gray-100 overflow-hidden z-50 animate-fade-in-up">
+                <div className="absolute top-full left-0 right-0 mt-2 bg-white rounded-2xl shadow-xl border border-gray-100 overflow-hidden z-50 animate-fade-in-up text-left">
                     {/* Empty State / Popular (Simulated logic if empty query) */}
                     {query.length === 0 && (
                         <div className="p-4">
