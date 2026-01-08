@@ -1,5 +1,4 @@
-
-import React, { useEffect, Suspense, ReactNode } from 'react';
+import React, { Component, useEffect, Suspense, ReactNode } from 'react';
 import { Routes, Route, Navigate, useLocation } from 'react-router-dom';
 import Navbar from './components/Navbar';
 import DynamicFooter from './components/DynamicFooter';
@@ -58,7 +57,7 @@ interface ErrorBoundaryState {
   hasError: boolean;
 }
 
-class ErrorBoundary extends React.Component<ErrorBoundaryProps, ErrorBoundaryState> {
+class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundaryState> {
   constructor(props: ErrorBoundaryProps) {
     super(props);
     this.state = { hasError: false };
@@ -201,4 +200,3 @@ function App() {
 }
 
 export default App;
-    

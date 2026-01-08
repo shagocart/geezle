@@ -10,7 +10,7 @@ const __dirname = path.dirname(__filename);
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, '.', '');
   return {
-    base: '/geezle/', // Critical for GitHub Pages deployment
+    base: '/geezle/', // Critical for GitHub Pages: matches repository name
     server: {
       port: 3000,
       host: '0.0.0.0',
